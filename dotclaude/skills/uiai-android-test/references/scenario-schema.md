@@ -26,6 +26,7 @@ steps:
 |-----------|------|------|
 | `name` | ✅ | シナリオ名 |
 | `app` | ✅ | アプリ識別子（オブジェクトまたは文字列） |
+| `variables` | - | 変数定義（キー: 値のオブジェクト） |
 | `steps` | ✅ | テストステップのリスト |
 
 ### app フィールド
@@ -56,6 +57,50 @@ app: "com.example.app"            # 両プラットフォームで同じ場合
 ```yaml
 app:
   android: "com.example.app"      # Androidのみ
+```
+
+### variables フィールド
+
+シナリオ内で再利用する値を変数として定義する。
+
+```yaml
+variables:
+  email: "test@example.com"
+  password: "password123"
+  office: "東京本社"
+```
+
+**変数名のルール**:
+- 英字またはアンダースコアで始まる
+- 英数字とアンダースコアのみ使用可能
+- パターン: `[a-zA-Z_][a-zA-Z0-9_]*`
+
+**変数の使用（補間）**:
+
+`do` や `then` 内で `(variable_name)` 構文を使用して変数を参照する。
+
+```yaml
+variables:
+  email: "test@example.com"
+  password: "password123"
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "メールアドレス欄に「(email)」を入力"
+      - do: "パスワード欄に「(password)」を入力"
+      - then: "「(email)」でログインできていること"
+```
+
+**エスケープ**:
+
+リテラルの括弧を使用する場合は `\(` と `\)` でエスケープする。
+
+```yaml
+steps:
+  - id: "計算"
+    actions:
+      - do: "「\(1+2\)」の計算結果を確認"   # → 「(1+2)」として解釈
 ```
 
 ### steps 内の要素
@@ -110,6 +155,30 @@ steps:
       - do: "「ログイン」ボタンをタップ"
       - then: "ホーム画面が表示されていること"
 ```
+
+### 変数を使ったテスト
+
+```yaml
+name: "ログインテスト（変数使用）"
+app:
+  android: "com.example.app"
+  ios: "com.example.App"
+
+variables:
+  email: "test@example.com"
+  password: "password123"
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "アプリを起動"
+      - do: "メールアドレス欄に「(email)」を入力"
+      - do: "パスワード欄に「(password)」を入力"
+      - do: "「ログイン」ボタンをタップ"
+      - then: "ホーム画面が表示されていること"
+```
+
+変数を使うことで、テストデータを一箇所で管理し、複数のステップで再利用できる。
 
 ### 複数セクションのテスト
 

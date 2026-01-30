@@ -4,6 +4,11 @@ app: "com.example.app"
 config:
   clear_data_before: true
 
+# 変数でテストデータを一元管理
+variables:
+  email: "test@example.com"
+  password: "password123"
+
 steps:
   - id: "起動"
     actions:
@@ -12,8 +17,8 @@ steps:
 
   - id: "入力"
     actions:
-      - do: "メールアドレス欄に「test@example.com」を入力"
-      - do: "パスワード欄に「password123」を入力"
+      - do: "メールアドレス欄に「(email)」を入力"
+      - do: "パスワード欄に「(password)」を入力"
 
   - id: "ログイン実行"
     actions:

@@ -21,6 +21,7 @@ AI駆動のクロスプラットフォームUIテスト自動化ツール。自�
 
 | スキル名 | 説明 |
 |---------|------|
+| `uiai-video-to-scenario` | 画面録画動画からシナリオYAMLを自動生成 |
 | `uiai-scenario-check` | シナリオYAMLの検証・自動修正 |
 | `uiai-create` | 対話形式で新しいスキルを作成 |
 
@@ -117,6 +118,19 @@ steps:
 /uiai-create name=uiai-web-test
 ```
 
+### 動画からシナリオ生成
+
+```bash
+# 画面録画からシナリオを自動生成
+/uiai-video-to-scenario video=recordings/login.mp4
+
+# プラットフォーム指定
+/uiai-video-to-scenario video=recordings/ios-flow.mov platform=ios
+
+# 出力先指定
+/uiai-video-to-scenario video=recordings/test.mp4 output=scenarios/my-test.yaml
+```
+
 ## 前提条件
 
 ### Android
@@ -147,6 +161,15 @@ pip3 install fb-idb
 # Playwrightのインストール
 npm install -D playwright
 npx playwright install
+```
+
+### 動画からシナリオ生成
+
+- ffmpegがインストールされていること
+
+```bash
+# ffmpegのインストール
+brew install ffmpeg
 ```
 
 ## 推奨ツール
@@ -180,6 +203,9 @@ dotclaude/
 │   ├── uiai-scenario-check/   # シナリオ検証スキル
 │   │   ├── SKILL.md
 │   │   └── references/
+│   ├── uiai-video-to-scenario/  # 動画→シナリオ生成
+│   │   ├── SKILL.md
+│   │   └── references/
 │   └── uiai-create/           # スキル作成ウィザード
 │       ├── SKILL.md
 │       └── references/
@@ -190,7 +216,10 @@ dotclaude/
 │       ├── ios-test-runner.md
 │       ├── ios-test-evaluator.md
 │       ├── web-test-runner.md
-│       └── web-test-evaluator.md
+│       ├── web-test-evaluator.md
+│       ├── video-frame-extractor.md
+│       ├── video-frame-analyzer.md
+│       └── video-scenario-generator.md
 └── rules/
 ```
 
@@ -238,6 +267,21 @@ dotclaude/
             ├── step_01_after.png   # スクリーンショット（実行後）
             ├── step_01_dom.html    # DOMスナップショット
             └── step_01_a11y.json   # アクセシビリティツリー
+```
+
+### 動画→シナリオ生成
+
+```
+.video-to-scenario/
+└── <video-name>/
+    ├── frames/              # 抽出フレーム
+    │   ├── frame_0001.png
+    │   ├── frame_0002.png
+    │   └── ...
+    ├── extraction_info.json # 抽出情報
+    ├── timestamps.jsonl     # タイムスタンプ
+    ├── analysis.json        # 解析結果
+    └── scenario.yaml        # 生成シナリオ
 ```
 
 ## ライセンス

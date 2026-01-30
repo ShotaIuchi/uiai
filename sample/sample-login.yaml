@@ -1,0 +1,27 @@
+name: "ログインフロー"
+app: "com.example.app"
+
+config:
+  clear_data_before: true
+
+steps:
+  - id: "起動"
+    actions:
+      - do: "アプリを起動"
+      - then: "ログイン画面が表示されていること"
+
+  - id: "入力"
+    actions:
+      - do: "メールアドレス欄に「test@example.com」を入力"
+      - do: "パスワード欄に「password123」を入力"
+
+  - id: "ログイン実行"
+    actions:
+      - do: "「ログイン」ボタンをタップ"
+        wait: 2
+      - then: "ホーム画面が表示されていること"
+
+  - id: "ログイン確認"
+    actions:
+      - do: "プロフィールアイコンをタップ"
+      - then: "ユーザー名が表示されていること"

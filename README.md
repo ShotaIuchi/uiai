@@ -15,7 +15,7 @@ AI駆動のクロスプラットフォームUIテスト自動化ツール。自�
 |-----------------|-----------|---------|
 | Android | ✅ 対応 | `uiai-android-test` |
 | iOS | ✅ 対応 | `uiai-ios-test` |
-| Web | 🚧 予定 | - |
+| Web | ✅ 対応 | `uiai-web-test` |
 
 ## ユーティリティスキル
 
@@ -31,6 +31,7 @@ name: "ログインテスト"
 app:
   android: "com.example.app"
   ios: "com.example.App"
+  web: "https://example.com"
 
 steps:
   - id: "起動"
@@ -77,6 +78,22 @@ steps:
 /uiai-ios-test scenarios=test/scenarios/login.yaml simulator=booted
 ```
 
+### Web
+
+```bash
+# Claude Code内で実行
+/uiai-web-test scenarios=test/scenarios/login.yaml
+
+# 複数シナリオ
+/uiai-web-test scenarios=test/scenarios/*.yaml
+
+# ブラウザ指定
+/uiai-web-test scenarios=test/scenarios/login.yaml browser=firefox
+
+# ヘッドレスモード無効（ブラウザ表示）
+/uiai-web-test scenarios=test/scenarios/login.yaml headless=false
+```
+
 ### シナリオ検証
 
 ```bash
@@ -121,6 +138,17 @@ brew install idb-companion
 pip3 install fb-idb
 ```
 
+### Web
+
+- Node.js v16以上がインストールされていること
+- Playwrightがインストールされていること
+
+```bash
+# Playwrightのインストール
+npm install -D playwright
+npx playwright install
+```
+
 ## ディレクトリ構造
 
 ```
@@ -130,6 +158,9 @@ dotclaude/
 │   │   ├── SKILL.md
 │   │   └── references/
 │   ├── uiai-ios-test/         # iOSテストスキル
+│   │   ├── SKILL.md
+│   │   └── references/
+│   ├── uiai-web-test/         # Webテストスキル
 │   │   ├── SKILL.md
 │   │   └── references/
 │   ├── uiai-scenario-check/   # シナリオ検証スキル
@@ -143,7 +174,9 @@ dotclaude/
 │       ├── adb-test-runner.md
 │       ├── adb-test-evaluator.md
 │       ├── ios-test-runner.md
-│       └── ios-test-evaluator.md
+│       ├── ios-test-evaluator.md
+│       ├── web-test-runner.md
+│       └── web-test-evaluator.md
 └── rules/
 ```
 
@@ -175,6 +208,22 @@ dotclaude/
             ├── result.json      # 結果JSON
             ├── step_01.png      # スクリーンショット
             └── step_01_ui.json  # UIツリー
+```
+
+### Web
+
+```
+.web-test/
+└── results/
+    └── <timestamp>/
+        ├── summary.md           # 全体サマリー
+        └── <scenario-name>/
+            ├── report.md        # テストレポート
+            ├── result.json      # 結果JSON
+            ├── step_01_before.png  # スクリーンショット（実行前）
+            ├── step_01_after.png   # スクリーンショット（実行後）
+            ├── step_01_dom.html    # DOMスナップショット
+            └── step_01_a11y.json   # アクセシビリティツリー
 ```
 
 ## ライセンス

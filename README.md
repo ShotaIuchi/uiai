@@ -14,7 +14,7 @@ AI駆動のクロスプラットフォームUIテスト自動化ツール。自�
 | プラットフォーム | ステータス | スキル名 |
 |-----------------|-----------|---------|
 | Android | ✅ 対応 | `uiai-android-test` |
-| iOS | 🚧 予定 | - |
+| iOS | ✅ 対応 | `uiai-ios-test` |
 | Web | 🚧 予定 | - |
 
 ## ユーティリティスキル
@@ -59,6 +59,22 @@ steps:
 /uiai-android-test scenarios=test/scenarios/login.yaml device=emulator-5554
 ```
 
+### iOS
+
+```bash
+# Claude Code内で実行
+/uiai-ios-test scenarios=test/scenarios/login.yaml
+
+# 複数シナリオ
+/uiai-ios-test scenarios=test/scenarios/*.yaml
+
+# シミュレータ指定
+/uiai-ios-test scenarios=test/scenarios/login.yaml simulator=<UDID>
+
+# 起動中のシミュレータを使用
+/uiai-ios-test scenarios=test/scenarios/login.yaml simulator=booted
+```
+
 ### シナリオ検証
 
 ```bash
@@ -90,12 +106,28 @@ steps:
 - Androidデバイス/エミュレータが接続されていること
 - USBデバッグが有効であること
 
+### iOS
+
+- Xcodeがインストールされていること
+- iOS Simulatorが利用可能であること
+- Facebook IDBがインストールされていること
+
+```bash
+# IDBのインストール
+brew tap facebook/fb
+brew install idb-companion
+pip3 install fb-idb
+```
+
 ## ディレクトリ構造
 
 ```
 dotclaude/
 ├── skills/
 │   ├── uiai-android-test/     # Androidテストスキル
+│   │   ├── SKILL.md
+│   │   └── references/
+│   ├── uiai-ios-test/         # iOSテストスキル
 │   │   ├── SKILL.md
 │   │   └── references/
 │   ├── uiai-scenario-check/   # シナリオ検証スキル
@@ -107,11 +139,15 @@ dotclaude/
 ├── agents/
 │   └── task/
 │       ├── adb-test-runner.md
-│       └── adb-test-evaluator.md
+│       ├── adb-test-evaluator.md
+│       ├── ios-test-runner.md
+│       └── ios-test-evaluator.md
 └── rules/
 ```
 
 ## 出力
+
+### Android
 
 ```
 .adb-test/
@@ -123,6 +159,20 @@ dotclaude/
             ├── result.json      # 結果JSON
             ├── step_01.png      # スクリーンショット
             └── step_01_ui.xml   # UIツリー
+```
+
+### iOS
+
+```
+.ios-test/
+└── results/
+    └── <timestamp>/
+        ├── summary.md           # 全体サマリー
+        └── <scenario-name>/
+            ├── report.md        # テストレポート
+            ├── result.json      # 結果JSON
+            ├── step_01.png      # スクリーンショット
+            └── step_01_ui.json  # UIツリー
 ```
 
 ## ライセンス

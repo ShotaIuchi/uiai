@@ -1,0 +1,1 @@
+../../uiai-android-test/references/scenario-schema.md

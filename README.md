@@ -149,6 +149,20 @@ npm install -D playwright
 npx playwright install
 ```
 
+## 推奨ツール
+
+### amu（シンボリックリンク管理）
+
+[amu](https://github.com/ShotaIuchi/amu)を使用すると、`dotclaude/`ディレクトリの管理が容易になります。
+
+```bash
+# インストール
+brew install ShotaIuchi/tap/amu
+
+# dotclaudeを~/.claudeにリンク
+amu add dotclaude ~/.claude
+```
+
 ## ディレクトリ構造
 
 ```

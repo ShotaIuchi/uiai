@@ -84,6 +84,28 @@ steps:
 /uiai-ios-test scenarios=test/scenarios/login.yaml strict=true
 ```
 
+## Execution Requirement (MUST)
+
+**各シナリオは必ずTaskツールでサブエージェントとして実行すること。**
+
+```
+for each scenario_file:
+  1. Task tool → ios-test-runner (実行)
+  2. Task tool → ios-test-evaluator (評価)
+```
+
+| Agent | Purpose |
+|-------|---------|
+| `ios-test-runner` | シナリオ実行、エビデンス収集 |
+| `ios-test-evaluator` | 結果評価、レポート生成 |
+
+複数シナリオがある場合、各シナリオを**独立したTaskとして実行**する。これにより：
+- コンテキスト分離（シナリオ間の状態汚染を防止）
+- エラー隔離（1シナリオの失敗が他に影響しない）
+- 並列実行可能（独立したシナリオは同時実行可）
+
+詳細は [execution-flow.md](./references/execution-flow.md) を参照。
+
 ## ステップの書き方
 
 ### アクション（do）

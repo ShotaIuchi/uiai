@@ -1,0 +1,30 @@
+{
+  "work_id": "FEAT-1-scenario-variables",
+  "source": {
+    "type": "github",
+    "id": "1",
+    "title": "シナリオに変数の概念を追加する"
+  },
+  "current_phase": "wf5-implement",
+  "phases": {
+    "wf1-kickoff": {
+      "status": "completed",
+      "completed_at": "2026-01-30T08:34:39Z"
+    },
+    "wf2-spec": {
+      "status": "completed",
+      "completed_at": "2026-01-30T08:35:30Z"
+    },
+    "wf3-plan": {
+      "status": "completed",
+      "completed_at": "2026-01-30T08:36:00Z"
+    },
+    "wf5-implement": {
+      "status": "completed",
+      "completed_at": "2026-01-30T08:38:41Z",
+      "steps_completed": [1, 2, 3, 4, 5, 6]
+    }
+  },
+  "created_at": "2026-01-30T08:34:39Z",
+  "updated_at": "2026-01-30T08:38:41Z"
+}

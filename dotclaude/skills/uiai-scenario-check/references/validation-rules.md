@@ -315,6 +315,78 @@ steps:
 
 **自動修正**: 不可（構造的な問題）
 
+### E030: 未定義変数参照
+
+`do` または `then` で参照している変数が `variables` に定義されていない。
+
+```yaml
+# NG
+variables:
+  email: "test@example.com"
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "メールに「(email)」を入力"
+      - do: "パスワードに「(password)」を入力"  # password は未定義
+
+# OK
+variables:
+  email: "test@example.com"
+  password: "password123"
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "メールに「(email)」を入力"
+      - do: "パスワードに「(password)」を入力"
+```
+
+**検出パターン**: `(?<!\\)\(([a-zA-Z_][a-zA-Z0-9_]*)\)` で変数参照を検出
+
+**自動修正**: 不可（変数の値は特定できない）
+
+### E031: 無効な変数名
+
+変数名が命名規則に従っていない。
+
+```yaml
+# NG
+variables:
+  123email: "test@example.com"     # 数字で始まる
+  my-var: "value"                  # ハイフン不可
+  "user name": "john"              # スペース不可
+
+# OK
+variables:
+  email: "test@example.com"
+  my_var: "value"
+  user_name: "john"
+  _private: "value"
+```
+
+**命名規則**: `^[a-zA-Z_][a-zA-Z0-9_]*$`
+
+**自動修正**: 不可（適切な名前は人間が決定すべき）
+
+### E032: 変数名重複
+
+同一シナリオ内で変数名が重複定義されている。
+
+```yaml
+# NG
+variables:
+  email: "test@example.com"
+  email: "another@example.com"     # 重複
+
+# OK
+variables:
+  email: "test@example.com"
+  email_alt: "another@example.com"
+```
+
+**自動修正**: 可（最初の定義を維持、後続を削除）
+
 ---
 
 ## 警告（推奨）
@@ -408,6 +480,36 @@ config:
 
 **自動修正**: 可（未知キーを削除）
 
+### W005: 未使用変数
+
+`variables` に定義されているが、どの `do` や `then` でも使用されていない。
+
+```yaml
+# 警告
+variables:
+  email: "test@example.com"
+  password: "password123"      # 未使用
+  office: "東京本社"           # 未使用
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "メールに「(email)」を入力"   # email のみ使用
+      - then: "ログインできること"
+
+# OK（すべての変数を使用）
+variables:
+  email: "test@example.com"
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "メールに「(email)」を入力"
+      - then: "ログインできること"
+```
+
+**自動修正**: 不可（意図的な場合がある。将来使う予定の変数かもしれない）
+
 ---
 
 ## 検証順序
@@ -416,7 +518,8 @@ config:
 2. 必須フィールド（E001-E006）
 3. 形式チェック（E010-E014）
 4. 参照整合性（E020-E023）
-5. 警告チェック（W001-W004）
+5. 変数チェック（E030-E032）
+6. 警告チェック（W001-W005）
 
 ## 終了条件
 

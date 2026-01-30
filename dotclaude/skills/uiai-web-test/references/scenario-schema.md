@@ -27,6 +27,7 @@ steps:
 |-----------|------|------|
 | `name` | ✅ | シナリオ名 |
 | `app` | ✅ | アプリ識別子（オブジェクトまたは文字列） |
+| `variables` | - | 変数定義（キー: 値のオブジェクト） |
 | `steps` | ✅ | テストステップのリスト |
 
 ### app フィールド
@@ -53,6 +54,50 @@ app:
 ```yaml
 app:
   web: "https://example.com"      # Webのみ
+```
+
+### variables フィールド
+
+シナリオ内で再利用する値を変数として定義する。
+
+```yaml
+variables:
+  email: "test@example.com"
+  password: "password123"
+  base_url: "https://example.com"
+```
+
+**変数名のルール**:
+- 英字またはアンダースコアで始まる
+- 英数字とアンダースコアのみ使用可能
+- パターン: `[a-zA-Z_][a-zA-Z0-9_]*`
+
+**変数の使用（補間）**:
+
+`do` や `then` 内で `(variable_name)` 構文を使用して変数を参照する。
+
+```yaml
+variables:
+  email: "test@example.com"
+  password: "password123"
+
+steps:
+  - id: "Login"
+    actions:
+      - do: "Enter '(email)' in email field"
+      - do: "Enter '(password)' in password field"
+      - then: "User '(email)' is logged in"
+```
+
+**エスケープ**:
+
+リテラルの括弧を使用する場合は `\(` と `\)` でエスケープする。
+
+```yaml
+steps:
+  - id: "Math"
+    actions:
+      - do: "Enter '\(1+2\)' in formula field"   # → '(1+2)' として解釈
 ```
 
 ### steps 内の要素
@@ -90,6 +135,30 @@ steps:
       - do: "Click 'Login' button"
       - then: "Dashboard is displayed"
 ```
+
+### 変数を使ったWebテスト
+
+```yaml
+name: "ログインテスト（変数使用）"
+app:
+  web: "https://example.com"
+
+variables:
+  email: "test@example.com"
+  password: "password123"
+  welcome_message: "Welcome, Test User"
+
+steps:
+  - id: "Login"
+    actions:
+      - do: "Open /login page"
+      - do: "Enter '(email)' in email field"
+      - do: "Enter '(password)' in password field"
+      - do: "Click 'Login' button"
+      - then: "'(welcome_message)' is displayed"
+```
+
+変数を使うことで、テストデータを一箇所で管理し、複数のステップで再利用できる。
 
 ### クロスプラットフォームテスト
 

@@ -37,7 +37,9 @@ references:
 
 ```yaml
 name: "拠点切り替えテスト"
-app: "com.example.app"
+app:
+  android: "com.example.app"
+  ios: "com.example.App"
 
 steps:
   - id: "起動"

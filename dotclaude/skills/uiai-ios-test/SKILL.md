@@ -46,7 +46,9 @@ references:
 
 ```yaml
 name: "ログインテスト"
-app: "com.example.App"  # Bundle Identifier
+app:
+  android: "com.example.app"
+  ios: "com.example.App"
 
 steps:
   - id: "起動"

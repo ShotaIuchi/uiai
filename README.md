@@ -28,7 +28,9 @@ AI駆動のクロスプラットフォームUIテスト自動化ツール。自�
 
 ```yaml
 name: "ログインテスト"
-app: "com.example.app"
+app:
+  android: "com.example.app"
+  ios: "com.example.App"
 
 steps:
   - id: "起動"

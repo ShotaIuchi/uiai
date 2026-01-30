@@ -1,12 +1,14 @@
 # Scenario YAML Schema
 
-自然言語ベースのAndroid UIテストシナリオ定義。
+自然言語ベースのクロスプラットフォームUIテストシナリオ定義。
 
 ## 基本構造
 
 ```yaml
 name: "シナリオ名"
-app: "com.example.app"
+app:
+  android: "com.example.app"      # Android パッケージ名
+  ios: "com.example.App"          # iOS Bundle Identifier
 
 steps:
   - id: "セクション名"
@@ -23,8 +25,38 @@ steps:
 | フィールド | 必須 | 説明 |
 |-----------|------|------|
 | `name` | ✅ | シナリオ名 |
-| `app` | ✅ | パッケージ名 |
+| `app` | ✅ | アプリ識別子（オブジェクトまたは文字列） |
 | `steps` | ✅ | テストステップのリスト |
+
+### app フィールド
+
+プラットフォーム別にアプリ識別子を指定する。
+
+**オブジェクト形式（推奨）**:
+
+```yaml
+app:
+  android: "com.example.app"      # Android パッケージ名
+  ios: "com.example.App"          # iOS Bundle Identifier
+```
+
+**文字列形式（後方互換・両プラットフォーム共通の場合）**:
+
+```yaml
+app: "com.example.app"            # 両プラットフォームで同じ場合
+```
+
+| サブフィールド | 説明 |
+|---------------|------|
+| `android` | Android パッケージ名（例: `com.example.app`） |
+| `ios` | iOS Bundle Identifier（例: `com.example.App`） |
+
+**片方のみ指定も可能**:
+
+```yaml
+app:
+  android: "com.example.app"      # Androidのみ
+```
 
 ### steps 内の要素
 
@@ -65,7 +97,9 @@ steps:
 
 ```yaml
 name: "ログインテスト"
-app: "com.example.app"
+app:
+  android: "com.example.app"
+  ios: "com.example.App"
 
 steps:
   - id: "ログイン"
@@ -81,7 +115,9 @@ steps:
 
 ```yaml
 name: "拠点切り替えテスト"
-app: "com.example.app"
+app:
+  android: "com.example.app"
+  ios: "com.example.App"
 
 steps:
   - id: "起動"
@@ -110,7 +146,9 @@ steps:
 
 ```yaml
 name: "データ読み込みテスト"
-app: "com.example.app"
+app:
+  android: "com.example.app"
+  ios: "com.example.App"
 
 steps:
   - id: "データ更新"
@@ -125,7 +163,9 @@ steps:
 
 ```yaml
 name: "リスト操作テスト"
-app: "com.example.app"
+app:
+  android: "com.example.app"
+  ios: "com.example.App"
 
 steps:
   - id: "スクロールテスト"
@@ -141,7 +181,9 @@ steps:
 
 ```yaml
 name: "検索テスト"
-app: "com.example.app"
+app:
+  android: "com.example.app"
+  ios: "com.example.App"
 
 steps:
   - id: "検索実行"
@@ -158,7 +200,9 @@ steps:
 
 ```yaml
 name: "リプレイテスト"
-app: "com.example.app"
+app:
+  android: "com.example.app"
+  ios: "com.example.App"
 
 steps:
   - id: "ログイン"
@@ -192,7 +236,9 @@ steps:
 
 ```yaml
 name: "単一リプレイテスト"
-app: "com.example.app"
+app:
+  android: "com.example.app"
+  ios: "com.example.App"
 
 steps:
   - id: "初期設定"
@@ -215,7 +261,9 @@ steps:
 
 ```yaml
 name: "再帰的リプレイテスト"
-app: "com.example.app"
+app:
+  android: "com.example.app"
+  ios: "com.example.App"
 
 steps:
   - id: "初期化"
@@ -345,7 +393,9 @@ OKをタップ
 
 ```yaml
 name: "テスト名"
-app: "com.example.app"
+app:
+  android: "com.example.app"
+  ios: "com.example.App"
 
 config:                          # オプション
   timeout: 60                    # 全体タイムアウト（秒）

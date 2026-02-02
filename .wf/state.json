@@ -5,7 +5,7 @@
       "source": {
         "type": "github",
         "issue": 3,
-        "pr": null
+        "pr": 4
       },
       "current": "ghwf1-kickoff",
       "next": "ghwf2-spec",

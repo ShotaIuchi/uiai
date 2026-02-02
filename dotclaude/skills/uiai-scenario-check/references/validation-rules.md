@@ -510,6 +510,56 @@ steps:
 
 **自動修正**: 不可（意図的な場合がある。将来使う予定の変数かもしれない）
 
+### W006: プレースホルダー変数
+
+変数の値が省略（undefined）または `null` に設定されており、実行時に対話式入力が必要。
+
+```yaml
+# 警告
+variables:
+  email: "test@example.com"
+  password:                         # 値省略 → 実行時にプロンプト
+  secret: null                      # null → 実行時にプロンプト
+  api_key:
+    prompt: "APIキーを入力してください"  # プロンプトのみ → 実行時に入力
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "メールに「(email)」を入力"
+      - do: "パスワードに「(password)」を入力"
+
+# OK（値が設定済み - プロンプトなし）
+variables:
+  email: "test@example.com"
+  password: "password123"
+
+# OK（空文字列は有効な値 - プロンプトなし）
+variables:
+  email: "test@example.com"
+  password: ""
+```
+
+**プレースホルダー変数の判定**:
+
+| 形式 | プレースホルダー判定 |
+|------|---------------------|
+| `password:` | ✅ Yes（値省略） |
+| `password: null` | ✅ Yes（明示的null） |
+| `password: { prompt: "..." }` | ✅ Yes（valueなし） |
+| `password: { value:, prompt: "..." }` | ✅ Yes（value省略） |
+| `password: { value: null, prompt: "..." }` | ✅ Yes（value null） |
+| `password: ""` | ❌ No（空文字列は有効） |
+| `password: "value"` | ❌ No（値あり） |
+
+**注意**: これはエラーではなく警告。意図的に対話式入力を使用する場合に使われる。
+
+**CI/ヘッドレス環境での動作**:
+- プレースホルダー変数があるシナリオは CI 環境でスキップされる
+- スキップ時のメッセージ: `Skipped: variables [password, api_key] require interactive input`
+
+**自動修正**: 不可（意図的な設計。CI で実行したい場合は値を設定すること）
+
 ---
 
 ## 検証順序
@@ -519,7 +569,7 @@ steps:
 3. 形式チェック（E010-E014）
 4. 参照整合性（E020-E023）
 5. 変数チェック（E030-E032）
-6. 警告チェック（W001-W005）
+6. 警告チェック（W001-W006）
 
 ## 終了条件
 

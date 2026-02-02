@@ -169,10 +169,10 @@ Phase 2 adds support for null-value variables that trigger interactive prompts a
 
 | Step | Title | Status |
 |------|-------|--------|
-| 7 | Update Schema for Null Variables | pending |
-| 8 | Add Interactive Prompt Documentation | pending |
-| 9 | Add W006 Validation Rule | pending |
-| 10 | Update Templates with Interactive Examples | pending |
+| 7 | Update Schema for Null Variables | completed |
+| 8 | Add Interactive Prompt Documentation | completed |
+| 9 | Add W006 Validation Rule | completed |
+| 10 | Update Templates with Interactive Examples | completed |
 
 ## Risks
 

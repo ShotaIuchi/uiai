@@ -83,6 +83,148 @@ BASE_OUTPUT_DIR=".ios-test/results/$TIMESTAMP"
 mkdir -p "$BASE_OUTPUT_DIR"
 ```
 
+## 変数収集フェーズ
+
+シナリオ実行前にプレースホルダー変数（値省略またはnull）の収集を行う。
+
+### フロー図
+
+```
+┌─────────────────────────────────────┐
+│        シナリオ YAML 読み込み         │
+└─────────────────────┬───────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────┐
+│       variables セクション解析        │
+└─────────────────────┬───────────────┘
+                      │
+                      ▼
+          ┌───────────┴───────────┐
+          │ プレースホルダー変数あり? │
+          │ (値省略 or null)       │
+          └───────────┬───────────┘
+                      │
+           ┌──────────┼──────────┐
+           │                     │
+           ▼                     ▼
+    ┌──────┴──────┐       ┌──────┴──────┐
+    │     Yes     │       │     No      │
+    └──────┬──────┘       └──────┬──────┘
+           │                     │
+           ▼                     │
+┌──────────┴──────────┐          │
+│  非対話式環境か確認  │          │
+└──────────┬──────────┘          │
+           │                     │
+    ┌──────┼──────┐              │
+    │             │              │
+    ▼             ▼              │
+┌───┴───┐   ┌─────┴─────┐        │
+│  CI   │   │ 対話式OK  │        │
+└───┬───┘   └─────┬─────┘        │
+    │             │              │
+    ▼             ▼              │
+┌───┴──────┐ ┌────┴─────┐        │
+│テストスキップ│ │ プロンプト│        │
+└──────────┘ │ 表示     │        │
+             └────┬─────┘        │
+                  │              │
+                  ▼              │
+         ┌────────┴────────┐     │
+         │  ユーザー入力待ち │     │
+         └────────┬────────┘     │
+                  │              │
+                  ▼              │
+         ┌────────┴────────┐     │
+         │  変数値をメモリに │     │
+         │  保存            │     │
+         └────────┬────────┘     │
+                  │              │
+                  └──────┬───────┘
+                         │
+                         ▼
+              ┌──────────┴──────────┐
+              │   テスト実行開始     │
+              └─────────────────────┘
+```
+
+### 変数収集の実装
+
+```bash
+# シナリオから変数を抽出
+variables=$(parse_yaml_variables "$scenario_file")
+
+# プレースホルダー変数を検出（値省略またはnull）
+placeholder_vars=()
+for var_name in ${!variables[@]}; do
+  var_value="${variables[$var_name]}"
+  # null または undefined（空）をプレースホルダーとして扱う
+  if [ "$var_value" = "null" ] || [ -z "$var_value" ]; then
+    placeholder_vars+=("$var_name")
+  fi
+done
+
+# プレースホルダー変数がある場合
+if [ ${#placeholder_vars[@]} -gt 0 ]; then
+  # 非対話式環境の検出
+  if [ ! -t 0 ] || [ -n "$CI" ] || [ -n "$GITHUB_ACTIONS" ]; then
+    echo "Skipped: variables [${placeholder_vars[*]}] require interactive input"
+    skip_scenario
+    continue
+  fi
+
+  # 対話式プロンプト
+  echo "=== 変数入力が必要です ==="
+  echo ""
+  for var_name in "${placeholder_vars[@]}"; do
+    prompt_msg=$(get_custom_prompt "$var_name" "$scenario_file")
+    if [ -n "$prompt_msg" ]; then
+      echo "Variable '$var_name' is not set."
+      read -p "$prompt_msg: " var_value
+    else
+      echo "Variable '$var_name' is not set."
+      read -p "Enter value for $var_name: " var_value
+    fi
+    variables[$var_name]="$var_value"
+    echo ""
+  done
+  echo "=== 変数入力完了 ==="
+  echo ""
+fi
+```
+
+### 非対話式環境の検出
+
+以下の条件で非対話式環境と判定：
+
+| 条件 | 説明 |
+|------|------|
+| `[ ! -t 0 ]` | 標準入力がターミナルでない |
+| `$CI` | CI 環境変数が設定されている |
+| `$GITHUB_ACTIONS` | GitHub Actions で実行中 |
+| `$JENKINS_URL` | Jenkins で実行中 |
+| `$GITLAB_CI` | GitLab CI で実行中 |
+
+### 非対話式環境での動作
+
+```
+=== Test Skipped ===
+
+Scenario: ログインテスト (test/login-flow.yaml)
+Reason: Variables require interactive input
+
+The following variables have null values and require user input:
+  - password
+  - api_key
+
+To run this test:
+  1. Run in interactive terminal
+  2. Or provide values in the YAML file
+
+=== End ===
+```
+
 ## シナリオ順次実行
 
 各シナリオに対して以下を実行:

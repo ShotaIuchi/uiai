@@ -5,8 +5,8 @@
     "id": "1",
     "title": "シナリオに変数の概念を追加する"
   },
-  "current_phase": "ghwf4-review",
-  "next_phase": "ghwf5-implement",
+  "current_phase": "ghwf7-pr",
+  "next_phase": null,
   "phases": {
     "wf1-kickoff": {
       "status": "completed",
@@ -44,6 +44,19 @@
     "ghwf4-review": {
       "status": "completed",
       "completed_at": "2026-02-02T03:00:00Z"
+    },
+    "ghwf5-implement": {
+      "status": "completed",
+      "completed_at": "2026-02-02T04:30:00Z",
+      "steps_completed": [7, 8, 9, 10]
+    },
+    "ghwf6-verify": {
+      "status": "completed",
+      "completed_at": "2026-02-02T05:00:00Z"
+    },
+    "ghwf7-pr": {
+      "status": "completed",
+      "completed_at": "2026-02-02T09:00:00Z"
     }
   },
   "pr": {
@@ -51,10 +64,15 @@
     "url": "https://github.com/ShotaIuchi/uiai/pull/2"
   },
   "created_at": "2026-01-30T08:34:39Z",
-  "updated_at": "2026-02-02T03:30:00Z",
-  "last_execution": "2026-02-02T03:30:00Z",
+  "updated_at": "2026-02-02T09:00:00Z",
+  "last_execution": "2026-02-02T09:00:00Z",
+  "completed_at": "2026-02-02T09:00:00Z",
   "kickoff": {
-    "revision": 3
+    "revision": 4
+  },
+  "implement": {
+    "current_step": 10,
+    "total_steps": 10
   },
   "remote": {
     "enabled": true,

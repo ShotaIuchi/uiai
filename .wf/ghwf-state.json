@@ -3,8 +3,18 @@
     "enabled": "true",
     "started_at": "2026-02-02T08:23:22Z",
     "tmux_session": "ghwf-daemon",
-    "last_poll": "2026-02-02T08:23:22Z",
-    "executed_steps": "0"
+    "last_poll": "2026-02-02T09:22:27Z",
+    "executed_steps": "2"
   },
-  "works": {}
+  "works": {
+    "DOCS-3-update-readme": {
+      "current": "ghwf5-implement",
+      "next": "ghwf6-verify",
+      "last_execution": "2026-02-02T09:42:00Z",
+      "implement": {
+        "current_step": 5,
+        "total_steps": 5
+      }
+    }
+  }
 }

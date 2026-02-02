@@ -27,12 +27,18 @@ AI駆動のクロスプラットフォームUIテスト自動化ツール。自�
 
 ## シナリオ例
 
+### 基本的なシナリオ
+
 ```yaml
 name: "ログインテスト"
 app:
   android: "com.example.app"
   ios: "com.example.App"
   web: "https://example.com"
+
+variables:
+  email: "test@example.com"
+  password: "password123"
 
 steps:
   - id: "起動"
@@ -42,10 +48,120 @@ steps:
 
   - id: "ログイン"
     actions:
-      - do: "メールアドレス欄に「test@example.com」を入力"
-      - do: "パスワード欄に「password123」を入力"
+      - do: "メールアドレス欄に「(email)」を入力"
+      - do: "パスワード欄に「(password)」を入力"
       - do: "「ログイン」ボタンをタップ"
       - then: "ホーム画面が表示されていること"
+```
+
+### 高度なシナリオ
+
+```yaml
+name: "拠点切り替えテスト"
+app:
+  android: "com.example.app"
+  ios: "com.example.App"
+
+variables:
+  # 通常の変数
+  office: "東京本社"
+  # プレースホルダー変数（実行時に入力）
+  password:
+
+config:
+  strict: true  # 全体で厳格モードを有効化
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "アプリを起動"
+      - do: "パスワード欄に「(password)」を入力"
+      - do: "「ログイン」ボタンをタップ"
+      - then: "ホーム画面が表示されていること"
+
+  - id: "拠点選択"
+    actions:
+      - do: "メニューをタップ"
+      - do: "「拠点切り替え」を選択"
+      - do: "「(office)」をタップ"
+      - then: "「(office)」と表示されていること"
+
+  - id: "再ログイン確認"
+    replay:
+      from: "ログイン"
+      to: "ログイン"
+    actions:
+      - then: "ホーム画面が表示されていること"
+        strict: false  # この検証のみ通常モード
+```
+
+## シナリオ機能
+
+### variables（変数）
+
+シナリオ内で再利用する値を定義する。`(variable_name)` 構文で参照可能。
+
+```yaml
+variables:
+  email: "test@example.com"
+  password: "password123"
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "メールアドレス欄に「(email)」を入力"
+```
+
+### 対話式入力（プレースホルダー変数）
+
+変数の値を省略または `null` にすると、テスト実行前に対話式で入力を求められる。
+
+```yaml
+variables:
+  email: "test@example.com"  # 固定値
+  password:                  # 実行時に入力
+  api_key: null              # 実行時に入力（明示的）
+  secret:
+    prompt: "シークレットを入力"  # カスタムプロンプト
+```
+
+CI環境などの非対話式環境では、プレースホルダー変数を含むテストはスキップされる。
+
+### strict（厳格モード）
+
+`strict: true` を指定すると、UIツリー/DOMのテキストで完全一致検証を行う。
+
+```yaml
+config:
+  strict: true  # シナリオ全体に適用
+
+steps:
+  - id: "確認"
+    actions:
+      - then: "「東京本社」と表示されていること"
+        strict: true  # この検証のみ厳格モード
+```
+
+- 通常モード: Vision APIで意味的に判定（柔軟）
+- 厳格モード: テキスト完全一致で判定（厳密）
+
+### replay（再実行）
+
+過去のセクションの `do` アクションを再実行する。`then` はスキップされる。
+
+```yaml
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "ログインボタンをタップ"
+      - then: "ホーム画面が表示されていること"
+
+  - id: "再確認"
+    replay:
+      from: "ログイン"
+      to: "ログイン"
+    actions:
+      - then: "画面が正しく表示されていること"
 ```
 
 ## 使用方法

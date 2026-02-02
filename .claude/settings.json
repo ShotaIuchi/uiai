@@ -1,0 +1,23 @@
+{
+  "enabledPlugins": {
+    "rust-analyzer-lsp@claude-plugins-official": true
+  },
+  "language": "Japanese",
+  "permissions": {
+    "deny": [
+      "Read(./**/__README*.md)",
+      "Read(./__README*.md)"
+    ],
+    "allow": [
+      "mcp__pencil",
+      "Bash(gh issue *)",
+      "Bash(gh pr *)",
+      "Bash(gh label *)",
+      "Bash(gh api *)",
+      "Bash(gh auth status)",
+      "Edit(docs/wf/**)",
+      "Write(docs/wf/**)"
+    ]
+  },
+  "plansDirectory": "./.claude/plans"
+}

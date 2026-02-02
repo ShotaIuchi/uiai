@@ -1,0 +1,10 @@
+{
+  "daemon": {
+    "enabled": "true",
+    "started_at": "2026-02-02T08:23:22Z",
+    "tmux_session": "ghwf-daemon",
+    "last_poll": "2026-02-02T08:23:22Z",
+    "executed_steps": "0"
+  },
+  "works": {}
+}

@@ -1,0 +1,22 @@
+{
+  "active_work": "DOCS-3-update-readme",
+  "works": {
+    "DOCS-3-update-readme": {
+      "source": {
+        "type": "github",
+        "issue": 3,
+        "pr": null
+      },
+      "current": "ghwf1-kickoff",
+      "next": "ghwf2-spec",
+      "last_execution": "2026-02-02T08:24:00Z",
+      "git": {
+        "base": "main",
+        "branch": "docs/3-update-readme"
+      },
+      "kickoff": {
+        "revision": 1
+      }
+    }
+  }
+}

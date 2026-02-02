@@ -27,6 +27,7 @@ steps:
 |-----------|------|------|
 | `name` | ✅ | シナリオ名 |
 | `app` | ✅ | アプリ識別子（オブジェクトまたは文字列） |
+| `variables` | - | 変数定義（キー: 値のオブジェクト） |
 | `steps` | ✅ | テストステップのリスト |
 
 ### app フィールド
@@ -53,6 +54,118 @@ app:
 ```yaml
 app:
   web: "https://example.com"      # Webのみ
+```
+
+### variables フィールド
+
+シナリオ内で再利用する値を変数として定義する。
+
+```yaml
+variables:
+  email: "test@example.com"
+  password: "password123"
+  base_url: "https://example.com"
+```
+
+**変数名のルール**:
+- 英字またはアンダースコアで始まる
+- 英数字とアンダースコアのみ使用可能
+- パターン: `[a-zA-Z_][a-zA-Z0-9_]*`
+
+**変数の使用（補間）**:
+
+`do` や `then` 内で `(variable_name)` 構文を使用して変数を参照する。
+
+```yaml
+variables:
+  email: "test@example.com"
+  password: "password123"
+
+steps:
+  - id: "Login"
+    actions:
+      - do: "Enter '(email)' in email field"
+      - do: "Enter '(password)' in password field"
+      - then: "User '(email)' is logged in"
+```
+
+**エスケープ**:
+
+リテラルの括弧を使用する場合は `\(` と `\)` でエスケープする。
+
+```yaml
+steps:
+  - id: "Math"
+    actions:
+      - do: "Enter '\(1+2\)' in formula field"   # → '(1+2)' として解釈
+```
+
+**対話式入力（プレースホルダー変数）**:
+
+変数の値を省略（undefined）または `null` に設定すると、テスト実行前に対話式プロンプトで値を入力できる。
+
+```yaml
+variables:
+  # 通常の変数（値が固定）
+  email: "test@example.com"
+
+  # プレースホルダー変数（実行時にプロンプトで入力）
+  password:                        # 値省略 → 対話式入力
+  secret: null                     # null → 対話式入力（明示的）
+
+  # カスタムプロンプトメッセージ付き
+  api_key:
+    prompt: "Enter your API key"
+
+  # 値省略とカスタムプロンプトの組み合わせ
+  auth_token:
+    value:                         # 値省略
+    prompt: "Enter authentication token"
+```
+
+**プレースホルダー変数の形式**:
+
+| Format | Example | Behavior |
+|--------|---------|----------|
+| Value omitted | `password:` | Interactive input (recommended) |
+| Null value | `password: null` | Interactive input (explicit) |
+| With prompt | `api_key: { prompt: "..." }` | Custom message input |
+| Value omitted + prompt | `token: { value:, prompt: "..." }` | Custom message input |
+
+**プレースホルダー変数の動作**:
+
+1. テスト開始前にプレースホルダー変数（値省略またはnull）が検出される
+2. 全てのプレースホルダー変数について順番にプロンプトが表示される
+3. ユーザーが全ての値を入力後、テストが開始される
+
+**プロンプト例**:
+
+```
+=== Variables require input ===
+
+Variable 'password' is not set.
+Enter value for password: ********
+
+Variable 'api_key' is not set.
+Enter your API key: ________
+
+=== Variable input complete ===
+```
+
+**値の種類と動作**:
+
+| Value | Behavior |
+|-------|----------|
+| Omitted (undefined) | Prompts for input at runtime |
+| `null` | Prompts for input at runtime (explicit) |
+| `""` (empty string) | Treated as valid value (no prompt) |
+
+**CI/Headless Environment**:
+
+In non-interactive environments (CI, headless), tests with placeholder variables are skipped.
+
+```
+Skipped: variables [password, api_key] require interactive input
 ```
 
 ### steps 内の要素
@@ -90,6 +203,30 @@ steps:
       - do: "Click 'Login' button"
       - then: "Dashboard is displayed"
 ```
+
+### 変数を使ったWebテスト
+
+```yaml
+name: "ログインテスト（変数使用）"
+app:
+  web: "https://example.com"
+
+variables:
+  email: "test@example.com"
+  password: "password123"
+  welcome_message: "Welcome, Test User"
+
+steps:
+  - id: "Login"
+    actions:
+      - do: "Open /login page"
+      - do: "Enter '(email)' in email field"
+      - do: "Enter '(password)' in password field"
+      - do: "Click 'Login' button"
+      - then: "'(welcome_message)' is displayed"
+```
+
+変数を使うことで、テストデータを一箇所で管理し、複数のステップで再利用できる。
 
 ### クロスプラットフォームテスト
 

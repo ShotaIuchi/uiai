@@ -73,6 +73,148 @@ BASE_OUTPUT_DIR=".web-test/results/$TIMESTAMP"
 mkdir -p "$BASE_OUTPUT_DIR"
 ```
 
+## Variable Collection Phase
+
+Collect placeholder variables (undefined or null) before scenario execution.
+
+### Flow Diagram
+
+```
+┌─────────────────────────────────────┐
+│       Load Scenario YAML            │
+└─────────────────────┬───────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────┐
+│      Parse variables section        │
+└─────────────────────┬───────────────┘
+                      │
+                      ▼
+          ┌───────────┴───────────┐
+          │ Placeholder vars?     │
+          │ (undefined or null)   │
+          └───────────┬───────────┘
+                      │
+           ┌──────────┼──────────┐
+           │                     │
+           ▼                     ▼
+    ┌──────┴──────┐       ┌──────┴──────┐
+    │     Yes     │       │     No      │
+    └──────┬──────┘       └──────┬──────┘
+           │                     │
+           ▼                     │
+┌──────────┴──────────┐          │
+│ Check environment   │          │
+└──────────┬──────────┘          │
+           │                     │
+    ┌──────┼──────┐              │
+    │             │              │
+    ▼             ▼              │
+┌───┴───┐   ┌─────┴─────┐        │
+│  CI   │   │Interactive│        │
+└───┬───┘   └─────┬─────┘        │
+    │             │              │
+    ▼             ▼              │
+┌───┴──────┐ ┌────┴─────┐        │
+│Skip test │ │  Display │        │
+└──────────┘ │  prompts │        │
+             └────┬─────┘        │
+                  │              │
+                  ▼              │
+         ┌────────┴────────┐     │
+         │ Wait for input  │     │
+         └────────┬────────┘     │
+                  │              │
+                  ▼              │
+         ┌────────┴────────┐     │
+         │Store values in  │     │
+         │memory           │     │
+         └────────┬────────┘     │
+                  │              │
+                  └──────┬───────┘
+                         │
+                         ▼
+              ┌──────────┴──────────┐
+              │  Start test run     │
+              └─────────────────────┘
+```
+
+### Variable Collection Implementation
+
+```bash
+# Extract variables from scenario
+variables=$(parse_yaml_variables "$scenario_file")
+
+# Detect placeholder variables (undefined or null)
+placeholder_vars=()
+for var_name in ${!variables[@]}; do
+  var_value="${variables[$var_name]}"
+  # Treat null or undefined (empty) as placeholder
+  if [ "$var_value" = "null" ] || [ -z "$var_value" ]; then
+    placeholder_vars+=("$var_name")
+  fi
+done
+
+# If placeholder variables exist
+if [ ${#placeholder_vars[@]} -gt 0 ]; then
+  # Detect non-interactive environment
+  if [ ! -t 0 ] || [ -n "$CI" ] || [ -n "$GITHUB_ACTIONS" ]; then
+    echo "Skipped: variables [${placeholder_vars[*]}] require interactive input"
+    skip_scenario
+    continue
+  fi
+
+  # Interactive prompt
+  echo "=== Variables require input ==="
+  echo ""
+  for var_name in "${placeholder_vars[@]}"; do
+    prompt_msg=$(get_custom_prompt "$var_name" "$scenario_file")
+    if [ -n "$prompt_msg" ]; then
+      echo "Variable '$var_name' is not set."
+      read -p "$prompt_msg: " var_value
+    else
+      echo "Variable '$var_name' is not set."
+      read -p "Enter value for $var_name: " var_value
+    fi
+    variables[$var_name]="$var_value"
+    echo ""
+  done
+  echo "=== Variable input complete ==="
+  echo ""
+fi
+```
+
+### Non-Interactive Environment Detection
+
+Detected as non-interactive when:
+
+| Condition | Description |
+|-----------|-------------|
+| `[ ! -t 0 ]` | stdin is not a terminal |
+| `$CI` | CI environment variable is set |
+| `$GITHUB_ACTIONS` | Running in GitHub Actions |
+| `$JENKINS_URL` | Running in Jenkins |
+| `$GITLAB_CI` | Running in GitLab CI |
+
+### Non-Interactive Environment Behavior
+
+```
+=== Test Skipped ===
+
+Scenario: Login Flow (test/login-flow.yaml)
+Reason: Variables require interactive input
+
+The following variables are placeholders and require user input:
+  - password
+  - api_key
+
+To run this test:
+  1. Run in interactive terminal
+  2. Or provide values in the YAML file
+
+=== End ===
+```
+
 ## シナリオ順次実行
 
 各シナリオに対して以下を実行:

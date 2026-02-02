@@ -1,0 +1,85 @@
+{
+  "work_id": "FEAT-1-scenario-variables",
+  "source": {
+    "type": "github",
+    "id": "1",
+    "title": "シナリオに変数の概念を追加する"
+  },
+  "current_phase": "ghwf7-pr",
+  "next_phase": null,
+  "phases": {
+    "wf1-kickoff": {
+      "status": "completed",
+      "completed_at": "2026-01-30T08:34:39Z"
+    },
+    "wf2-spec": {
+      "status": "completed",
+      "completed_at": "2026-01-30T08:35:30Z"
+    },
+    "wf3-plan": {
+      "status": "completed",
+      "completed_at": "2026-01-30T08:36:00Z"
+    },
+    "wf5-implement": {
+      "status": "completed",
+      "completed_at": "2026-01-30T08:40:00Z",
+      "steps_completed": [1, 2, 3, 4, 5, 6]
+    },
+    "wf6-verify": {
+      "status": "completed",
+      "completed_at": "2026-01-30T08:39:40Z"
+    },
+    "ghwf1-kickoff": {
+      "status": "completed",
+      "completed_at": "2026-02-02T01:10:00Z"
+    },
+    "ghwf2-spec": {
+      "status": "completed",
+      "completed_at": "2026-02-02T01:20:00Z"
+    },
+    "ghwf3-plan": {
+      "status": "completed",
+      "completed_at": "2026-02-02T02:30:00Z"
+    },
+    "ghwf4-review": {
+      "status": "completed",
+      "completed_at": "2026-02-02T03:00:00Z"
+    },
+    "ghwf5-implement": {
+      "status": "completed",
+      "completed_at": "2026-02-02T04:30:00Z",
+      "steps_completed": [7, 8, 9, 10]
+    },
+    "ghwf6-verify": {
+      "status": "completed",
+      "completed_at": "2026-02-02T05:00:00Z"
+    },
+    "ghwf7-pr": {
+      "status": "completed",
+      "completed_at": "2026-02-02T09:00:00Z"
+    }
+  },
+  "pr": {
+    "number": 2,
+    "url": "https://github.com/ShotaIuchi/uiai/pull/2"
+  },
+  "created_at": "2026-01-30T08:34:39Z",
+  "updated_at": "2026-02-02T09:00:00Z",
+  "last_execution": "2026-02-02T09:00:00Z",
+  "completed_at": "2026-02-02T09:00:00Z",
+  "kickoff": {
+    "revision": 4
+  },
+  "implement": {
+    "current_step": 10,
+    "total_steps": 10
+  },
+  "remote": {
+    "enabled": true,
+    "source_issue": 1,
+    "poll_interval": 60,
+    "last_check": null,
+    "status": "waiting_approval",
+    "tmux_session": "wf-remote-FEAT-1-scenario-variables"
+  }
+}

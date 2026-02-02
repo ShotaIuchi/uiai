@@ -26,6 +26,7 @@ steps:
 |-----------|------|------|
 | `name` | ✅ | シナリオ名 |
 | `app` | ✅ | アプリ識別子（オブジェクトまたは文字列） |
+| `variables` | - | 変数定義（キー: 値のオブジェクト） |
 | `steps` | ✅ | テストステップのリスト |
 
 ### app フィールド
@@ -56,6 +57,118 @@ app: "com.example.app"            # 両プラットフォームで同じ場合
 ```yaml
 app:
   android: "com.example.app"      # Androidのみ
+```
+
+### variables フィールド
+
+シナリオ内で再利用する値を変数として定義する。
+
+```yaml
+variables:
+  email: "test@example.com"
+  password: "password123"
+  office: "東京本社"
+```
+
+**変数名のルール**:
+- 英字またはアンダースコアで始まる
+- 英数字とアンダースコアのみ使用可能
+- パターン: `[a-zA-Z_][a-zA-Z0-9_]*`
+
+**変数の使用（補間）**:
+
+`do` や `then` 内で `(variable_name)` 構文を使用して変数を参照する。
+
+```yaml
+variables:
+  email: "test@example.com"
+  password: "password123"
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "メールアドレス欄に「(email)」を入力"
+      - do: "パスワード欄に「(password)」を入力"
+      - then: "「(email)」でログインできていること"
+```
+
+**エスケープ**:
+
+リテラルの括弧を使用する場合は `\(` と `\)` でエスケープする。
+
+```yaml
+steps:
+  - id: "計算"
+    actions:
+      - do: "「\(1+2\)」の計算結果を確認"   # → 「(1+2)」として解釈
+```
+
+**対話式入力（プレースホルダー変数）**:
+
+変数の値を省略（undefined）または `null` に設定すると、テスト実行前に対話式プロンプトで値を入力できる。
+
+```yaml
+variables:
+  # 通常の変数（値が固定）
+  email: "test@example.com"
+
+  # プレースホルダー変数（実行時にプロンプトで入力）
+  password:                        # 値省略 → 対話式入力
+  secret: null                     # null → 対話式入力（明示的）
+
+  # カスタムプロンプトメッセージ付き
+  api_key:
+    prompt: "APIキーを入力してください"
+
+  # 値省略とカスタムプロンプトの組み合わせ
+  auth_token:
+    value:                         # 値省略
+    prompt: "認証トークンを入力"
+```
+
+**プレースホルダー変数の形式**:
+
+| 形式 | 例 | 動作 |
+|------|-----|------|
+| 値省略 | `password:` | 対話式入力（推奨） |
+| null 値 | `password: null` | 対話式入力（明示的） |
+| プロンプト付き | `api_key: { prompt: "..." }` | カスタムメッセージで入力 |
+| value省略+プロンプト | `token: { value:, prompt: "..." }` | カスタムメッセージで入力 |
+
+**プレースホルダー変数の動作**:
+
+1. テスト開始前にプレースホルダー変数（値省略またはnull）が検出される
+2. 全てのプレースホルダー変数について順番にプロンプトが表示される
+3. ユーザーが全ての値を入力後、テストが開始される
+
+**プロンプト例**:
+
+```
+=== 変数入力が必要です ===
+
+Variable 'password' is not set.
+Enter value for password: ********
+
+Variable 'api_key' is not set.
+APIキーを入力してください: ________
+
+=== 変数入力完了 ===
+```
+
+**値の種類と動作**:
+
+| 値 | 動作 |
+|----|------|
+| 省略（undefined） | 実行時にプロンプトで入力を要求 |
+| `null` | 実行時にプロンプトで入力を要求（明示的） |
+| `""` (空文字列) | 有効な値として扱われる（プロンプトなし） |
+
+**CI/ヘッドレス環境**:
+
+非対話式環境（CI、ヘッドレス）でプレースホルダー変数があると、テストはスキップされる。
+
+```
+Skipped: variables [password, api_key] require interactive input
 ```
 
 ### steps 内の要素
@@ -110,6 +223,30 @@ steps:
       - do: "「ログイン」ボタンをタップ"
       - then: "ホーム画面が表示されていること"
 ```
+
+### 変数を使ったテスト
+
+```yaml
+name: "ログインテスト（変数使用）"
+app:
+  android: "com.example.app"
+  ios: "com.example.App"
+
+variables:
+  email: "test@example.com"
+  password: "password123"
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "アプリを起動"
+      - do: "メールアドレス欄に「(email)」を入力"
+      - do: "パスワード欄に「(password)」を入力"
+      - do: "「ログイン」ボタンをタップ"
+      - then: "ホーム画面が表示されていること"
+```
+
+変数を使うことで、テストデータを一箇所で管理し、複数のステップで再利用できる。
 
 ### 複数セクションのテスト
 

@@ -4,6 +4,18 @@ app: "com.example.app"
 config:
   clear_data_before: true
 
+# 変数でテストデータを一元管理
+# - 固定値: 直接文字列を指定
+# - 対話式入力: 値を省略または null を指定（実行時にプロンプトで入力）
+variables:
+  email: "test@example.com"       # 固定値（テスト用メールアドレス）
+  password: "password123"         # 固定値（テスト用パスワード）
+  # 対話式入力の例（本番環境向け）:
+  # email:                        # 値省略 → 実行時に入力（推奨）
+  # password:                     # 値省略 → 実行時に入力
+  # api_key:                      # カスタムプロンプト付き
+  #   prompt: "APIキーを入力してください"
+
 steps:
   - id: "起動"
     actions:
@@ -12,8 +24,8 @@ steps:
 
   - id: "入力"
     actions:
-      - do: "メールアドレス欄に「test@example.com」を入力"
-      - do: "パスワード欄に「password123」を入力"
+      - do: "メールアドレス欄に「(email)」を入力"
+      - do: "パスワード欄に「(password)」を入力"
 
   - id: "ログイン実行"
     actions:

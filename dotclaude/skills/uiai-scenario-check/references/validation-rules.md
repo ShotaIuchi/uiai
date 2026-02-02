@@ -315,6 +315,78 @@ steps:
 
 **自動修正**: 不可（構造的な問題）
 
+### E030: 未定義変数参照
+
+`do` または `then` で参照している変数が `variables` に定義されていない。
+
+```yaml
+# NG
+variables:
+  email: "test@example.com"
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "メールに「(email)」を入力"
+      - do: "パスワードに「(password)」を入力"  # password は未定義
+
+# OK
+variables:
+  email: "test@example.com"
+  password: "password123"
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "メールに「(email)」を入力"
+      - do: "パスワードに「(password)」を入力"
+```
+
+**検出パターン**: `(?<!\\)\(([a-zA-Z_][a-zA-Z0-9_]*)\)` で変数参照を検出
+
+**自動修正**: 不可（変数の値は特定できない）
+
+### E031: 無効な変数名
+
+変数名が命名規則に従っていない。
+
+```yaml
+# NG
+variables:
+  123email: "test@example.com"     # 数字で始まる
+  my-var: "value"                  # ハイフン不可
+  "user name": "john"              # スペース不可
+
+# OK
+variables:
+  email: "test@example.com"
+  my_var: "value"
+  user_name: "john"
+  _private: "value"
+```
+
+**命名規則**: `^[a-zA-Z_][a-zA-Z0-9_]*$`
+
+**自動修正**: 不可（適切な名前は人間が決定すべき）
+
+### E032: 変数名重複
+
+同一シナリオ内で変数名が重複定義されている。
+
+```yaml
+# NG
+variables:
+  email: "test@example.com"
+  email: "another@example.com"     # 重複
+
+# OK
+variables:
+  email: "test@example.com"
+  email_alt: "another@example.com"
+```
+
+**自動修正**: 可（最初の定義を維持、後続を削除）
+
 ---
 
 ## 警告（推奨）
@@ -408,6 +480,86 @@ config:
 
 **自動修正**: 可（未知キーを削除）
 
+### W005: 未使用変数
+
+`variables` に定義されているが、どの `do` や `then` でも使用されていない。
+
+```yaml
+# 警告
+variables:
+  email: "test@example.com"
+  password: "password123"      # 未使用
+  office: "東京本社"           # 未使用
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "メールに「(email)」を入力"   # email のみ使用
+      - then: "ログインできること"
+
+# OK（すべての変数を使用）
+variables:
+  email: "test@example.com"
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "メールに「(email)」を入力"
+      - then: "ログインできること"
+```
+
+**自動修正**: 不可（意図的な場合がある。将来使う予定の変数かもしれない）
+
+### W006: プレースホルダー変数
+
+変数の値が省略（undefined）または `null` に設定されており、実行時に対話式入力が必要。
+
+```yaml
+# 警告
+variables:
+  email: "test@example.com"
+  password:                         # 値省略 → 実行時にプロンプト
+  secret: null                      # null → 実行時にプロンプト
+  api_key:
+    prompt: "APIキーを入力してください"  # プロンプトのみ → 実行時に入力
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "メールに「(email)」を入力"
+      - do: "パスワードに「(password)」を入力"
+
+# OK（値が設定済み - プロンプトなし）
+variables:
+  email: "test@example.com"
+  password: "password123"
+
+# OK（空文字列は有効な値 - プロンプトなし）
+variables:
+  email: "test@example.com"
+  password: ""
+```
+
+**プレースホルダー変数の判定**:
+
+| 形式 | プレースホルダー判定 |
+|------|---------------------|
+| `password:` | ✅ Yes（値省略） |
+| `password: null` | ✅ Yes（明示的null） |
+| `password: { prompt: "..." }` | ✅ Yes（valueなし） |
+| `password: { value:, prompt: "..." }` | ✅ Yes（value省略） |
+| `password: { value: null, prompt: "..." }` | ✅ Yes（value null） |
+| `password: ""` | ❌ No（空文字列は有効） |
+| `password: "value"` | ❌ No（値あり） |
+
+**注意**: これはエラーではなく警告。意図的に対話式入力を使用する場合に使われる。
+
+**CI/ヘッドレス環境での動作**:
+- プレースホルダー変数があるシナリオは CI 環境でスキップされる
+- スキップ時のメッセージ: `Skipped: variables [password, api_key] require interactive input`
+
+**自動修正**: 不可（意図的な設計。CI で実行したい場合は値を設定すること）
+
 ---
 
 ## 検証順序
@@ -416,7 +568,8 @@ config:
 2. 必須フィールド（E001-E006）
 3. 形式チェック（E010-E014）
 4. 参照整合性（E020-E023）
-5. 警告チェック（W001-W004）
+5. 変数チェック（E030-E032）
+6. 警告チェック（W001-W006）
 
 ## 終了条件
 

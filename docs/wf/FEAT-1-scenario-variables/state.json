@@ -5,7 +5,8 @@
     "id": "1",
     "title": "シナリオに変数の概念を追加する"
   },
-  "current_phase": "wf5-implement",
+  "current_phase": "ghwf4-review",
+  "next_phase": "ghwf5-implement",
   "phases": {
     "wf1-kickoff": {
       "status": "completed",
@@ -21,10 +22,45 @@
     },
     "wf5-implement": {
       "status": "completed",
-      "completed_at": "2026-01-30T08:38:41Z",
+      "completed_at": "2026-01-30T08:40:00Z",
       "steps_completed": [1, 2, 3, 4, 5, 6]
+    },
+    "wf6-verify": {
+      "status": "completed",
+      "completed_at": "2026-01-30T08:39:40Z"
+    },
+    "ghwf1-kickoff": {
+      "status": "completed",
+      "completed_at": "2026-02-02T01:10:00Z"
+    },
+    "ghwf2-spec": {
+      "status": "completed",
+      "completed_at": "2026-02-02T01:20:00Z"
+    },
+    "ghwf3-plan": {
+      "status": "completed",
+      "completed_at": "2026-02-02T02:30:00Z"
+    },
+    "ghwf4-review": {
+      "status": "completed",
+      "completed_at": "2026-02-02T03:00:00Z"
     }
   },
+  "pr": {
+    "number": 2,
+    "url": "https://github.com/ShotaIuchi/uiai/pull/2"
+  },
   "created_at": "2026-01-30T08:34:39Z",
-  "updated_at": "2026-01-30T08:38:41Z"
+  "updated_at": "2026-02-02T02:00:00Z",
+  "kickoff": {
+    "revision": 3
+  },
+  "remote": {
+    "enabled": true,
+    "source_issue": 1,
+    "poll_interval": 60,
+    "last_check": null,
+    "status": "waiting_approval",
+    "tmux_session": "wf-remote-FEAT-1-scenario-variables"
+  }
 }

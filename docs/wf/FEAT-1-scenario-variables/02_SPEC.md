@@ -2,11 +2,14 @@
 
 > Kickoff: [01_KICKOFF.md](./01_KICKOFF.md)
 > Created: 2026-01-30
-> Last Updated: 2026-01-30
+> Last Updated: 2026-02-02
+> Revision: 2
 
 ## Overview
 
 Add variable support to scenario YAML files, enabling test data reuse and reducing duplication. Variables are defined in a `variables` section and interpolated in `do` and `then` actions using `(variable_name)` syntax.
+
+**Enhancement (Revision 2):** Support interactive variable input when variable values are null or empty, enabling runtime prompts for test data entry.
 
 ## Scope
 
@@ -24,6 +27,7 @@ Add variable support to scenario YAML files, enabling test data reuse and reduci
 - Cross-scenario variable sharing
 - Dynamic/computed variables at runtime
 - Nested variable references (variables referencing other variables)
+- Password masking in terminal output (future enhancement)
 
 ## Users / Use-cases
 
@@ -32,8 +36,12 @@ Add variable support to scenario YAML files, enabling test data reuse and reduci
 | Test Author | Reuse login credentials across multiple steps | High |
 | Test Author | Change test data in one place for multiple scenarios | High |
 | Test Author | Make scenarios more readable by using named values | Medium |
+| Test Author | Enter sensitive credentials at runtime without storing in YAML | High |
+| Test Author | Prompt for environment-specific values during test execution | Medium |
 
 ## Functional Requirements
+
+### Core Variable Support (Revision 1)
 
 - FR-1: Scenario YAML supports a `variables` section at top level
 - FR-2: Variables can be referenced using `(variable_name)` syntax in `do` and `then` strings
@@ -41,6 +49,15 @@ Add variable support to scenario YAML files, enabling test data reuse and reduci
 - FR-4: Undefined variable references produce validation error
 - FR-5: Variables are interpolated before action execution
 - FR-6: Literal parentheses can be escaped as `\(` and `\)`
+
+### Interactive Variable Input (Revision 2)
+
+- FR-7: Variables with `null` value trigger interactive prompt before test execution
+- FR-8: Interactive prompt displays variable name and waits for user input
+- FR-9: All null-value variables are collected and prompted together before test starts
+- FR-10: User-provided values are stored in memory for the duration of test execution
+- FR-11: Empty string `""` is treated as valid value (no prompt triggered)
+- FR-12: In CI/headless environments, null variables should cause test skip with clear message
 
 ## Non-functional Requirements
 
@@ -79,6 +96,33 @@ Add variable support to scenario YAML files, enabling test data reuse and reduci
 - **Given:** Action `do: "Calculate \(1+2\) result"`
 - **When:** Interpolation is applied
 - **Then:** Literal parentheses preserved: `do: "Calculate (1+2) result"`
+
+### AC-6: Interactive Prompt for Null Variables (Revision 2)
+
+- **Given:** A scenario with `variables: { password: null }`
+- **When:** Test execution starts
+- **Then:** User is prompted: `Variable 'password' is not set. Enter value for password:`
+- **And:** After user enters value, test continues with provided value
+
+### AC-7: Multiple Null Variables Prompted Together (Revision 2)
+
+- **Given:** A scenario with `variables: { email: null, password: null, api_key: null }`
+- **When:** Test execution starts
+- **Then:** All three variables are prompted sequentially before test begins
+- **And:** Test only starts after all values are provided
+
+### AC-8: Null Variable Validation Warning (Revision 2)
+
+- **Given:** A scenario with `variables: { secret: null }`
+- **When:** Validation is run with `uiai-scenario-check`
+- **Then:** Warning W006 is reported: "Variable 'secret' has null value (will prompt at runtime)"
+- **And:** Validation passes (warning, not error)
+
+### AC-9: CI/Headless Environment Handling (Revision 2)
+
+- **Given:** A scenario with null variables running in non-interactive environment
+- **When:** Interactive prompt would be triggered
+- **Then:** Test is skipped with message: "Skipped: variables [password, api_key] require interactive input"
 
 ## Affected Components
 
@@ -123,6 +167,30 @@ steps:
       - do: "パスワード欄に「(password)」を入力"
 ```
 
+**Interactive Variable Example (Revision 2):**
+
+```yaml
+name: "本番ログインテスト"
+app:
+  android: "com.example.app"
+
+variables:
+  # Hardcoded test email (no prompt)
+  email: "test@example.com"
+  # Will prompt user at runtime
+  password: null
+  # Alternative: explicit prompt configuration
+  api_key:
+    value: null
+    prompt: "Enter your API key"
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "メールアドレス欄に「(email)」を入力"
+      - do: "パスワード欄に「(password)」を入力"
+```
+
 ### Validation Rules Addition
 
 **New Error Codes:**
@@ -132,7 +200,10 @@ steps:
 | E030 | Undefined variable reference | No |
 | E031 | Invalid variable name | No |
 | E032 | Duplicate variable definition | Yes (keep first) |
-| E033 | Empty variable value | Warning only |
+| W005 | Unused variable definition | No (suggest removal) |
+| W006 | Variable has null value (will prompt at runtime) | No |
+
+> Note: E033 (Empty variable value) removed - empty string `""` is a valid value.
 
 ### Auto-fix Rules Addition
 
@@ -140,6 +211,7 @@ steps:
 |-------|-----|
 | E032 | Remove duplicate variable definitions, keep first occurrence |
 | W005 | Suggest removing unused variable definitions |
+| W006 | No auto-fix (intentional design for interactive input) |
 
 ## API Changes
 
@@ -154,8 +226,19 @@ None - this is a YAML schema change only.
 variables:
   type: object
   additionalProperties:
-    type: string
-  description: "Key-value pairs for variable definitions"
+    oneOf:
+      - type: string
+      - type: "null"
+      - type: object
+        properties:
+          value:
+            oneOf:
+              - type: string
+              - type: "null"
+          prompt:
+            type: string
+            description: "Custom prompt message for interactive input"
+  description: "Key-value pairs for variable definitions. Null values trigger interactive prompts."
 ```
 
 ### Variable Name Pattern
@@ -182,6 +265,8 @@ None - CLI only.
 - **Unit Tests:** Variable interpolation function, regex matching
 - **Integration Tests:** Full scenario execution with variables
 - **Manual Tests:** Validate sample scenarios with variables work on real devices
+- **Interactive Tests (Revision 2):** Verify prompt behavior for null variables
+- **CI Tests (Revision 2):** Verify skip behavior in non-interactive environments
 
 ## Assumptions
 
@@ -191,11 +276,21 @@ None - CLI only.
 ## Open Questions
 
 - [ ] Should we support default values? e.g., `(var:default)`
-- [ ] Should variables be available in `replay` sections? (Recommendation: Yes)
+- [x] Should variables be available in `replay` sections? (Recommendation: Yes) -> **Decided: Yes**
 - [ ] Should we support variable type hints? e.g., `variables: { count: 5 }` as number
+- [ ] How should interactive mode behave in CI/headless environments? (Recommendation: Skip with message)
+- [ ] Should `null` and empty string `""` be treated differently? (Recommendation: Yes - null prompts, empty string is valid value)
 
 ## References
 
 - GitHub Issue #1: シナリオに変数の概念を追加する
+- GitHub Issue #1 Comment: 対話式変数入力の要望
 - Current scenario-schema.md
 - Current validation-rules.md
+
+## Revision History
+
+| Revision | Date | Description |
+|----------|------|-------------|
+| 1 | 2026-01-30 | Initial spec: variable definition and interpolation |
+| 2 | 2026-02-02 | Added interactive variable input for null values (Issue comment feedback) |

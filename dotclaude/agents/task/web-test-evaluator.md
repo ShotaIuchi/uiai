@@ -49,26 +49,41 @@ Read: <result_dir>/result.json
 steps_with_assertions = [s for s in steps if s.then]
 ```
 
-### 3. 各 then 条件の検証
+### 3. 各 then 条件の検証（並列実行）
+
+**重要: 検証はブラウザを使わないため、全アサーションを並列で処理すること。**
 
 ```
-for step in steps_with_assertions:
-  # 1. 実行後スクリーンショットを読み込み
-  screenshot = Read("<step_num>_after.png")
+# ステップ1: 全エビデンスファイルを並列読み込み
+# 1回のレスポンスで全ての Read を同時に呼び出す
+parallel Read:
+  screenshot_step01 = Read("step_01_after.png")
+  screenshot_step03 = Read("step_03_after.png")
+  dom_step01 = Read("step_01_dom.html")
+  dom_step03 = Read("step_03_dom.html")
+  a11y_step01 = Read("step_01_a11y.json")
+  a11y_step03 = Read("step_03_a11y.json")
+  ... (then 条件があるステップ全て)
 
-  # 2. Vision APIで検証
-  result = verify_with_vision(screenshot, step.then)
+# ステップ2: 全 then 条件を並列で Vision 検証
+# 読み込んだスクリーンショットを使い、1回のレスポンスで全検証を実行
+# 各検証は独立しているため、安全に並列実行できる
+parallel verify:
+  result_step01 = verify_with_vision(screenshot_step01, step01.then)
+  result_step03 = verify_with_vision(screenshot_step03, step03.then)
+  ... (全 then 条件)
 
-  # 3. 補助的にDOM/a11yも確認
-  if needs_text_verification(step.then):
-    dom = Read("<step_num>_dom.html")
-    a11y = Read("<step_num>_a11y.json")
-    text_result = verify_text_in_dom(dom, step.then)
-    a11y_result = verify_in_a11y(a11y, step.then)
-
-  # 4. 結果を記録
+# ステップ3: 結果を集約・記録
+for step, result in zip(steps_with_assertions, results):
   record_assertion_result(step, result)
 ```
+
+#### 並列実行ルール
+
+- **Read ツール**: then 条件があるステップの `*_after.png`, `*_dom.html`, `*_a11y.json` を全て同時に読み込む
+- **Vision 検証**: 全スクリーンショットの検証を1回のレスポンスで同時実行する
+- **DOM/a11y 検証**: テキスト確認が必要な場合、Vision と同時に DOM/a11y も確認する
+- **依存関係なし**: 各アサーションは他のアサーション結果に依存しない
 
 ### 4. Vision検証
 

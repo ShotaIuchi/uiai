@@ -235,8 +235,8 @@ Xcode プロジェクトの Bundle Identifier を使用する。
         └── <scenario-name>/
             ├── report.md        # テストレポート
             ├── result.json      # 結果JSON
-            ├── step_01.png      # スクリーンショット
-            └── step_01_ui.json  # UIツリー
+            ├── step_01_after.png # スクリーンショット（実行後）
+            └── step_01_ui.json  # UIツリー（要素特定が必要なステップのみ）
 ```
 
 ## 前提条件

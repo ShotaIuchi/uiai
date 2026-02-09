@@ -85,30 +85,44 @@ for step in steps:
     continue
 
   if step.do:
-    # 1. 実行前スクリーンショット
-    await page.screenshot({ path: "${step_num}_before.png" })
+    # 1. DOM/a11y取得（要素特定が必要なステップのみ）
+    #    スキップ対象: "Wait N seconds", "Scroll down", "Go back", "Refresh" 等
+    if needs_element_lookup(step.do):
+      const html = await page.content()
+      writeFile("${step_num}_dom.html", html)
+      const a11y = await page.accessibility.snapshot()
+      writeFile("${step_num}_a11y.json", JSON.stringify(a11y, null, 2))
 
-    # 2. DOM取得
-    const html = await page.content()
-    writeFile("${step_num}_dom.html", html)
-
-    # 3. アクセシビリティツリー取得
-    const a11y = await page.accessibility.snapshot()
-    writeFile("${step_num}_a11y.json", JSON.stringify(a11y, null, 2))
-
-    # 4. アクション解釈・実行
+    # 2. アクション解釈・実行
     await execute_action(step.do)
 
-    # 5. 待機（指定時）
+    # 3. 待機（指定時）
     if step.wait:
       await page.waitForTimeout(step.wait * 1000)
 
-    # 6. 実行後スクリーンショット
+    # 4. 実行後スクリーンショット
     await page.screenshot({ path: "${step_num}_after.png" })
 
-    # 7. 結果記録
+    # 5. 結果記録
     record_step_result(step)
 ```
+
+#### エビデンス最適化ルール
+
+- **before スクリーンショットは省略**: step N の `after.png` ≈ step N+1 の `before.png` のため不要
+- **DOM/a11yは必要時のみ取得**: 以下のパターンではDOM/a11y取得をスキップする
+
+| パターン | DOM/a11y | 理由 |
+|----------|---------|------|
+| `Click 'XXX' button` | 必要 | 要素の特定に使う |
+| `Enter 'YYY' in XXX field` | 必要 | 入力フィールドの特定に使う |
+| `Select 'YYY' from XXX` | 必要 | セレクトボックスの特定に使う |
+| `Open https://...` | 不要 | URLで直接ナビゲーション |
+| `Go to /path` | 不要 | URLで直接ナビゲーション |
+| `Wait N seconds` | 不要 | 待機のみ |
+| `Scroll down` | 不要 | window.scrollBy で直接実行 |
+| `Refresh the page` | 不要 | page.reload() で直接実行 |
+| `Go back` | 不要 | page.goBack() で直接実行 |
 
 ### 4. 自然言語アクション解釈
 
@@ -298,7 +312,6 @@ async function captureA11y(page, filename) {
       "action_type": "navigate",
       "playwright_action": "page.goto('https://example.com/login')",
       "evidence": {
-        "screenshot_before": "01_before.png",
         "screenshot_after": "01_after.png",
         "dom": "01_dom.html",
         "a11y": "01_a11y.json"
@@ -317,7 +330,6 @@ async function captureA11y(page, filename) {
       },
       "playwright_action": "page.getByRole('button', { name: 'Login' }).click()",
       "evidence": {
-        "screenshot_before": "02_before.png",
         "screenshot_after": "02_after.png",
         "dom": "02_dom.html",
         "a11y": "02_a11y.json"

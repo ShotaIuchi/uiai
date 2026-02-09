@@ -76,25 +76,40 @@ for step in steps:
     continue
 
   if step.do:
-    # 1. 実行前スクリーンショット
-    capture_screenshot("${step_num}_before.png")
+    # 1. UIツリー取得（要素特定が必要なステップのみ）
+    #    スキップ対象: "N秒待つ", "ホームに戻る", "下にスクロール" 等
+    if needs_element_lookup(step.do):
+      capture_uitree("${step_num}_ui.json")
 
-    # 2. UIツリー取得
-    capture_uitree("${step_num}_ui.json")
-
-    # 3. アクション解釈・実行
+    # 2. アクション解釈・実行
     execute_action(step.do)
 
-    # 4. 待機（指定時）
+    # 3. 待機（指定時）
     if step.wait:
       sleep(step.wait)
 
-    # 5. 実行後スクリーンショット
+    # 4. 実行後スクリーンショット
     capture_screenshot("${step_num}_after.png")
 
-    # 6. 結果記録
+    # 5. 結果記録
     record_step_result(step)
 ```
+
+#### エビデンス最適化ルール
+
+- **before スクリーンショットは省略**: step N の `after.png` ≈ step N+1 の `before.png` のため不要
+- **UIツリーは必要時のみ取得**: 以下のパターンではUIツリー取得をスキップする
+
+| パターン | UIツリー | 理由 |
+|----------|---------|------|
+| `「XXX」をタップ` | 必要 | 要素座標の特定に使う |
+| `XXX欄に「YYY」を入力` | 必要 | 入力フィールドの特定に使う |
+| `「XXX」が見えるまでスクロール` | 必要 | 要素の存在確認に使う |
+| `アプリを起動` | 不要 | Bundle IDで直接起動 |
+| `N秒待つ` | 不要 | 待機のみ |
+| `左端からスワイプして戻る` | 不要 | 固定座標でスワイプ |
+| `ホームに戻る` | 不要 | HOME ボタンで直接実行 |
+| `下にスクロール` | 不要 | 固定座標でスワイプ |
 
 ### 4. 自然言語アクション解釈
 
@@ -247,7 +262,6 @@ capture_uitree() {
       "action_type": "launch",
       "command": "xcrun simctl launch <udid> com.example.App",
       "evidence": {
-        "screenshot_before": "01_before.png",
         "screenshot_after": "01_after.png",
         "uitree": "01_ui.json"
       }
@@ -265,7 +279,6 @@ capture_uitree() {
       },
       "command": "idb ui tap 200 522",
       "evidence": {
-        "screenshot_before": "02_before.png",
         "screenshot_after": "02_after.png",
         "uitree": "02_ui.json"
       }

@@ -81,10 +81,10 @@ steps:
 
 **各シナリオは必ずTaskツールでサブエージェントとして実行すること。**
 
-| Agent | Purpose |
-|-------|---------|
-| `web-test-runner` | シナリオ実行、エビデンス収集 |
-| `web-test-evaluator` | 結果評価、レポート生成 |
+| Agent | Purpose | Model |
+|-------|---------|-------|
+| `web-test-runner` | シナリオ実行、エビデンス収集 | デフォルト |
+| `web-test-evaluator` | 結果評価、レポート生成 | **sonnet**（`model: sonnet` を指定） |
 
 ### 単一シナリオの場合
 

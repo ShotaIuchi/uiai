@@ -45,34 +45,56 @@ steps_with_assertions = [s for s in steps if s.then]
 
 **重要: 検証はデバイスを使わないため、全アサーションを並列で処理すること。**
 
+#### strict モードと通常モードの分岐
+
+アサーションを strict/通常に分類し、それぞれ最適な検証を行う：
+
 ```
-# ステップ1: 全エビデンスファイルを並列読み込み
-# 1回のレスポンスで全ての Read を同時に呼び出す
+# アサーションを分類
+strict_assertions = [s for s in steps_with_assertions if s.strict]
+normal_assertions = [s for s in steps_with_assertions if not s.strict]
+```
+
+**strict アサーション → UIツリーのテキスト完全一致のみ（Vision スキップ）:**
+
+```
+# strict: UIツリーだけ読み込めばよい（スクリーンショット不要）
+parallel Read:
+  uitree_step03 = Read("step_03_ui.json")
+  ... (strict な then 条件のステップのみ)
+
+# テキスト完全一致で判定（Vision API 不要、高速）
+for step in strict_assertions:
+  target_text = extract_quoted_text(step.then)
+  result = check_text_in_uitree(uitree, target_text)  # PASS or FAIL
+```
+
+**通常アサーション → Vision API で検証:**
+
+```
+# 通常: スクリーンショットと UIツリーを並列読み込み
 parallel Read:
   screenshot_step01 = Read("step_01_after.png")
-  screenshot_step03 = Read("step_03_after.png")
   uitree_step01 = Read("step_01_ui.json")
-  uitree_step03 = Read("step_03_ui.json")
-  ... (then 条件があるステップ全て)
+  ... (通常の then 条件のステップ全て)
 
-# ステップ2: 全 then 条件を並列で Vision 検証
-# 読み込んだスクリーンショットを使い、1回のレスポンスで全検証を実行
-# 各検証は独立しているため、安全に並列実行できる
+# 全 then 条件を並列で Vision 検証
 parallel verify:
   result_step01 = verify_with_vision(screenshot_step01, step01.then)
-  result_step03 = verify_with_vision(screenshot_step03, step03.then)
-  ... (全 then 条件)
+  ... (全通常 then 条件)
+```
 
-# ステップ3: 結果を集約・記録
-for step, result in zip(steps_with_assertions, results):
+```
+# 結果を集約・記録
+for step, result in zip(all_assertions, all_results):
   record_assertion_result(step, result)
 ```
 
 #### 並列実行ルール
 
-- **Read ツール**: then 条件があるステップの `*_after.png` と `*_ui.json` を全て同時に読み込む
-- **Vision 検証**: 全スクリーンショットの検証を1回のレスポンスで同時実行する
-- **UIツリー検証**: テキスト確認が必要な場合、Vision と同時に UIツリーも確認する
+- **strict アサーション**: UIツリーのみ読み込み、テキスト完全一致で判定。**Vision API は呼ばない**
+- **通常アサーション**: スクリーンショット + UIツリーを並列読み込み → Vision 検証を並列実行
+- **Read ツール**: 必要なファイルを全て同時に読み込む
 - **依存関係なし**: 各アサーションは他のアサーション結果に依存しない
 
 ### 3. Vision検証

@@ -12,6 +12,7 @@ app: "com.example.app"
 #   clear_data_before: true      # 実行前にアプリデータをクリア
 #   stop_app_after: true         # 実行後にアプリを停止
 #   strict: true                 # 厳格モード（全do/thenで完全一致検証）
+#   fast_fail: true              # 最初のエラーで中断（デフォルト: false）
 
 # 変数定義（必要な場合のみ）
 # variables:

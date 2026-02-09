@@ -94,10 +94,10 @@ for each scenario_file:
   2. Task tool → ios-test-evaluator (評価)
 ```
 
-| Agent | Purpose |
-|-------|---------|
-| `ios-test-runner` | シナリオ実行、エビデンス収集 |
-| `ios-test-evaluator` | 結果評価、レポート生成 |
+| Agent | Purpose | Model |
+|-------|---------|-------|
+| `ios-test-runner` | シナリオ実行、エビデンス収集 | デフォルト |
+| `ios-test-evaluator` | 結果評価、レポート生成 | **sonnet**（`model: sonnet` を指定） |
 
 複数シナリオがある場合、各シナリオを**独立したTaskとして実行**する。これにより：
 - コンテキスト分離（シナリオ間の状態汚染を防止）

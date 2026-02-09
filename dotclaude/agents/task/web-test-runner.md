@@ -264,7 +264,25 @@ function inferElementType(description) {
 }
 ```
 
-### 6. エビデンス収集
+### 6. fast-fail モード
+
+`config.fast_fail: true` の場合、アクション実行でエラーが発生した時点でテストを中断する：
+
+```
+if config.fast_fail and step_failed:
+  # エラー発生ステップまでのエビデンスを保存
+  save_partial_results(steps_executed)
+  # 残りのステップはスキップ
+  log("FAST FAIL: Step ${step_num} failed, skipping remaining steps")
+  break
+```
+
+| 設定 | 動作 |
+|------|------|
+| `fast_fail: true` | 最初のエラーで中断、部分結果を出力 |
+| `fast_fail: false`（デフォルト） | エラーでも全ステップを実行 |
+
+### 7. エビデンス収集
 
 ```javascript
 // スクリーンショット
@@ -285,7 +303,7 @@ async function captureA11y(page, filename) {
 }
 ```
 
-### 7. 結果JSON出力
+### 8. 結果JSON出力
 
 ```json
 {

@@ -86,10 +86,10 @@ for each scenario_file:
   2. Task tool → adb-test-evaluator (評価)
 ```
 
-| Agent | Purpose |
-|-------|---------|
-| `adb-test-runner` | シナリオ実行、エビデンス収集 |
-| `adb-test-evaluator` | 結果評価、レポート生成 |
+| Agent | Purpose | Model |
+|-------|---------|-------|
+| `adb-test-runner` | シナリオ実行、エビデンス収集 | デフォルト |
+| `adb-test-evaluator` | 結果評価、レポート生成 | **sonnet**（`model: sonnet` を指定） |
 
 複数シナリオがある場合、各シナリオを**独立したTaskとして実行**する。これにより：
 - コンテキスト分離（シナリオ間の状態汚染を防止）

@@ -50,9 +50,7 @@ steps_with_assertions = [s for s in steps if s.then]
 
 **重要: 検証はデバイスを使わないため、全アサーションを並列で処理すること。**
 
-#### strict モードと通常モードの分岐
-
-アサーションを strict/通常に分類し、それぞれ最適な検証を行う：
+#### 検証の3段階（strict → UIツリー推論 → Vision フォールバック）
 
 ```
 # アサーションを分類
@@ -60,33 +58,55 @@ strict_assertions = [s for s in steps_with_assertions if s.strict]
 normal_assertions = [s for s in steps_with_assertions if not s.strict]
 ```
 
-**strict アサーション → UIツリーのテキスト完全一致のみ（Vision スキップ）:**
+**Phase 1: 全アサーションの UIツリーを並列読み込み（スクリーンショットはまだ読まない）**
 
 ```
-# strict: UIツリーだけ読み込めばよい（スクリーンショット不要）
 parallel Read:
+  uitree_step01 = Read("step_01_ui.xml")
   uitree_step03 = Read("step_03_ui.xml")
-  ... (strict な then 条件のステップのみ)
+  ... (全 then 条件があるステップ)
+```
 
-# テキスト完全一致で判定（Vision API 不要、高速）
+**Phase 2: strict アサーション → テキスト完全一致（AI 不要）**
+
+```
 for step in strict_assertions:
   target_text = extract_quoted_text(step.then)
-  result = check_text_in_uitree(uitree, target_text)  # PASS or FAIL
+  result = check_text_exact_match(uitree, target_text)  # PASS or FAIL
 ```
 
-**通常アサーション → Vision API で検証:**
+**Phase 3: 通常アサーション → UIツリーから AI 推論（Vision 不要）**
 
 ```
-# 通常: スクリーンショットと UIツリーを並列読み込み
-parallel Read:
-  screenshot_step01 = Read("step_01_after.png")
-  uitree_step01 = Read("step_01_ui.xml")
-  ... (通常の then 条件のステップ全て)
+# UIツリーのテキスト情報から then 条件を推論判定
+# 要素テキスト、状態（enabled/checked）、階層構造を総合的に判断
+for step in normal_assertions:
+  result = reason_from_uitree(uitree, step.then)
+  # → PASS / FAIL / INCONCLUSIVE
+```
 
-# 全 then 条件を並列で Vision 検証
-parallel verify:
-  result_step01 = verify_with_vision(screenshot_step01, step01.then)
-  ... (全通常 then 条件)
+UIツリーから判定できるケース（Vision 不要）:
+- `「東京本社」と表示されていること` → テキスト検索
+- `エラーメッセージが表示されていないこと` → テキスト否定検索
+- `チェックボックスがONになっていること` → 状態属性
+- `リストに5件以上表示されていること` → 要素カウント
+- `ホーム画面が表示されていること` → ナビゲーション要素やタイトルから推論
+
+**Phase 4: INCONCLUSIVE のみ Vision フォールバック**
+
+```
+inconclusive_steps = [s for s in normal_assertions if s.result == "inconclusive"]
+
+if inconclusive_steps:
+  # INCONCLUSIVE のステップだけスクリーンショットを読み込む
+  parallel Read:
+    screenshot = Read("step_XX_after.png")
+    ... (INCONCLUSIVE のステップのみ)
+
+  # Vision で最終判定
+  parallel verify:
+    result = verify_with_vision(screenshot, step.then)
+    ...
 ```
 
 ```
@@ -95,79 +115,73 @@ for step, result in zip(all_assertions, all_results):
   record_assertion_result(step, result)
 ```
 
-#### 並列実行ルール
+#### 検証ルール
 
-- **strict アサーション**: UIツリーのみ読み込み、テキスト完全一致で判定。**Vision API は呼ばない**
-- **通常アサーション**: スクリーンショット + UIツリーを並列読み込み → Vision 検証を並列実行
-- **Read ツール**: 必要なファイルを全て同時に読み込む
+- **strict**: UIツリーのテキスト完全一致。AI も Vision も不要
+- **通常**: UIツリーを AI が読んで推論。**スクリーンショットは読まない**
+- **フォールバック**: UIツリーから判断できない場合のみ Vision を使用
+- **並列実行**: 各 Phase 内のファイル読み込み・検証は全て並列で実行する
 - **依存関係なし**: 各アサーションは他のアサーション結果に依存しない
 
-### 4. Vision検証
+### 4. UIツリー推論（メイン検証）
 
-スクリーンショットを確認し、自然言語の期待結果が満たされているか判定：
+UIツリーのテキスト情報を読み、then 条件を AI で推論判定する。
+**スクリーンショットは読まない。**
 
 ```
 検証対象: "ホーム画面が表示されていること"
 
+UIツリーの情報から判断:
+- ナビゲーションバーのタイトルテキスト
+- ホーム画面固有のUI要素（タブバー、メニュー等）
+- 画面遷移を示す要素の存在
+
+判定:
+- PASS: UIツリーの要素から期待結果が満たされていると推論できる
+- FAIL: UIツリーの要素から期待と異なる状態と判断できる
+- INCONCLUSIVE: UIツリーだけでは判断できない（→ Phase 4 で Vision フォールバック）
+```
+
+### 5. Vision検証（フォールバックのみ）
+
+**Phase 3 で INCONCLUSIVE になったアサーションのみ**、スクリーンショットで最終判定する：
+
+```
+検証対象: INCONCLUSIVE となったアサーション
+
 プロンプト:
 「このスクリーンショットを確認してください。
- 期待結果: ホーム画面が表示されていること
+ 期待結果: <then条件>
 
  この期待結果は満たされていますか？
  - PASS: 期待通りの状態
  - FAIL: 期待と異なる状態
- - INCONCLUSIVE: 判断が難しい（UIに該当する要素がない、画面が想定と異なるなど）
+ - INCONCLUSIVE: 判断が難しい
 
- 結果と理由を答えてください。
- INCONCLUSIVEの場合は、なぜ判断できないか、手動で確認すべきポイントも記載してください。」
-```
-
-### 5. UIツリー検証（補助）
-
-テキスト確認系の `then` はUIツリーでも検証：
-
-```
-検証対象: "「東京本社」と表示されていること"
-
-1. UIツリーを検索
-2. text="東京本社" を含む要素があるか確認
-3. Vision結果と併せて判定
+ 結果と理由を答えてください。」
 ```
 
 ### 6. 結果判定ロジック
 
 ```python
-def evaluate_assertion(then_condition, screenshot, uitree):
+def evaluate_assertion(then_condition, uitree):
     """
-    then 条件を評価
+    then 条件を評価（UIツリー推論 → Vision フォールバック）
 
     Returns:
         status: "passed" | "failed" | "inconclusive"
         reason: 判定理由
-        manual_check_points: list (INCONCLUSIVEの場合のみ)
     """
-    # Vision APIで画面を確認
+    # Phase 1: UIツリーから推論
+    uitree_result = reason_from_uitree(uitree, then_condition)
+
+    if uitree_result.status != "inconclusive":
+        return uitree_result.status, uitree_result.reason
+
+    # Phase 2: INCONCLUSIVE の場合のみ Vision フォールバック
+    screenshot = Read("step_XX_after.png")
     vision_result = check_with_vision(screenshot, then_condition)
-
-    # テキスト系はUIツリーも確認
-    if contains_quoted_text(then_condition):
-        target_text = extract_quoted_text(then_condition)
-        text_exists = check_text_in_uitree(uitree, target_text)
-
-        # 否定形の場合
-        if "ない" in then_condition or "いない" in then_condition:
-            if text_exists:
-                return "failed", f"「{target_text}」が表示されています", []
-        else:
-            if not text_exists:
-                # UIツリーに見つからない場合は INCONCLUSIVE として詳細を提供
-                return "inconclusive", f"「{target_text}」がUIツリーに見つかりません", [
-                    f"スクリーンショットで「{target_text}」が表示されているか目視確認",
-                    "別の画面やダイアログに表示されている可能性を確認",
-                    "アプリの仕様として該当の表示があるか確認"
-                ]
-
-    return vision_result.status, vision_result.reason, vision_result.manual_check_points
+    return vision_result.status, vision_result.reason
 ```
 
 ## Output Format（重要）

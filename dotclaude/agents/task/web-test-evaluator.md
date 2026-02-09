@@ -53,9 +53,7 @@ steps_with_assertions = [s for s in steps if s.then]
 
 **重要: 検証はブラウザを使わないため、全アサーションを並列で処理すること。**
 
-#### strict モードと通常モードの分岐
-
-アサーションを strict/通常に分類し、それぞれ最適な検証を行う：
+#### 検証の3段階（strict → DOM/a11y 推論 → Vision フォールバック）
 
 ```
 # アサーションを分類
@@ -63,35 +61,58 @@ strict_assertions = [s for s in steps_with_assertions if s.strict]
 normal_assertions = [s for s in steps_with_assertions if not s.strict]
 ```
 
-**strict アサーション → DOM テキスト完全一致のみ（Vision スキップ）:**
+**Phase 1: 全アサーションの DOM/a11y を並列読み込み（スクリーンショットはまだ読まない）**
 
 ```
-# strict: DOM/a11y だけ読み込めばよい（スクリーンショット不要）
 parallel Read:
-  dom_step03 = Read("step_03_dom.html")
-  a11y_step03 = Read("step_03_a11y.json")
-  ... (strict な then 条件のステップのみ)
-
-# テキスト完全一致で判定（Vision API 不要、高速）
-for step in strict_assertions:
-  target_text = extract_quoted_text(step.then)
-  result = check_text_in_dom(dom, target_text)  # PASS or FAIL
-```
-
-**通常アサーション → Vision API で検証:**
-
-```
-# 通常: スクリーンショットと DOM/a11y を並列読み込み
-parallel Read:
-  screenshot_step01 = Read("step_01_after.png")
   dom_step01 = Read("step_01_dom.html")
   a11y_step01 = Read("step_01_a11y.json")
-  ... (通常の then 条件のステップ全て)
+  dom_step03 = Read("step_03_dom.html")
+  a11y_step03 = Read("step_03_a11y.json")
+  ... (全 then 条件があるステップ)
+```
 
-# 全 then 条件を並列で Vision 検証
-parallel verify:
-  result_step01 = verify_with_vision(screenshot_step01, step01.then)
-  ... (全通常 then 条件)
+**Phase 2: strict アサーション → テキスト完全一致（AI 不要）**
+
+```
+for step in strict_assertions:
+  target_text = extract_quoted_text(step.then)
+  result = check_text_exact_match(dom, target_text)  # PASS or FAIL
+```
+
+**Phase 3: 通常アサーション → DOM/a11y から AI 推論（Vision 不要）**
+
+```
+# DOM/a11y のテキスト・構造情報から then 条件を推論判定
+# テキストコンテンツ、要素ロール、状態属性を総合的に判断
+for step in normal_assertions:
+  result = reason_from_dom_and_a11y(dom, a11y, step.then)
+  # → PASS / FAIL / INCONCLUSIVE
+```
+
+DOM/a11y から判定できるケース（Vision 不要）:
+- `'Welcome, John' is displayed` → DOM テキスト検索
+- `Error message is not displayed` → テキスト否定検索
+- `'Submit' button is disabled` → a11y の disabled 属性
+- `Checkbox is checked` → a11y の checked 属性
+- `Dashboard is displayed` → ページタイトル、ナビゲーション要素から推論
+- `URL contains '/dashboard'` → DOM のメタ情報から推論
+
+**Phase 4: INCONCLUSIVE のみ Vision フォールバック**
+
+```
+inconclusive_steps = [s for s in normal_assertions if s.result == "inconclusive"]
+
+if inconclusive_steps:
+  # INCONCLUSIVE のステップだけスクリーンショットを読み込む
+  parallel Read:
+    screenshot = Read("step_XX_after.png")
+    ... (INCONCLUSIVE のステップのみ)
+
+  # Vision で最終判定
+  parallel verify:
+    result = verify_with_vision(screenshot, step.then)
+    ...
 ```
 
 ```
@@ -100,116 +121,56 @@ for step, result in zip(all_assertions, all_results):
   record_assertion_result(step, result)
 ```
 
-#### 並列実行ルール
+#### 検証ルール
 
-- **strict アサーション**: DOM/a11y のみ読み込み、テキスト完全一致で判定。**Vision API は呼ばない**
-- **通常アサーション**: スクリーンショット + DOM/a11y を並列読み込み → Vision 検証を並列実行
-- **Read ツール**: 必要なファイルを全て同時に読み込む
+- **strict**: DOM のテキスト完全一致。AI も Vision も不要
+- **通常**: DOM/a11y を AI が読んで推論。**スクリーンショットは読まない**
+- **フォールバック**: DOM/a11y から判断できない場合のみ Vision を使用
+- **並列実行**: 各 Phase 内のファイル読み込み・検証は全て並列で実行する
 - **依存関係なし**: 各アサーションは他のアサーション結果に依存しない
 
-### 4. Vision検証
+### 4. Vision検証（フォールバックのみ）
 
-スクリーンショットを確認し、自然言語の期待結果が満たされているか判定：
+**Phase 3 で INCONCLUSIVE になったアサーションのみ**、スクリーンショットで最終判定する：
 
 ```
-検証対象: "Dashboard is displayed"
+検証対象: INCONCLUSIVE となったアサーション
 
 プロンプト:
 「このスクリーンショットを確認してください。
- 期待結果: Dashboard is displayed
+ 期待結果: <then条件>
 
  この期待結果は満たされていますか？
  - PASS: 期待通りの状態
  - FAIL: 期待と異なる状態
- - INCONCLUSIVE: 判断が難しい（UIに該当する要素がない、画面が想定と異なるなど）
+ - INCONCLUSIVE: 判断が難しい
 
- 結果と理由を答えてください。
- INCONCLUSIVEの場合は、なぜ判断できないか、手動で確認すべきポイントも記載してください。」
+ 結果と理由を答えてください。」
 ```
 
-### 5. DOM検証（補助）
-
-テキスト確認系の `then` はDOMでも検証：
-
-```
-検証対象: "'Welcome, John' is displayed"
-
-1. DOMを解析
-2. テキスト "Welcome, John" を含む要素があるか確認
-3. Vision結果と併せて判定
-```
-
-### 6. アクセシビリティツリー検証（補助）
-
-要素の状態確認に有効：
-
-```
-検証対象: "'Submit' button is disabled"
-
-1. a11yツリーを検索
-2. name="Submit", role="button" の要素を検索
-3. disabled属性を確認
-```
-
-### 7. 結果判定ロジック
+### 5. 結果判定ロジック
 
 ```javascript
-function evaluateAssertion(thenCondition, screenshot, dom, a11y) {
+function evaluateAssertion(thenCondition, dom, a11y) {
   /**
-   * then 条件を評価
+   * then 条件を評価（DOM/a11y 推論 → Vision フォールバック）
    *
    * Returns:
    *   status: "passed" | "failed" | "inconclusive"
    *   reason: 判定理由
-   *   manual_check_points: list (INCONCLUSIVEの場合のみ)
    */
 
-  // Vision APIで画面を確認
+  // Phase 1: DOM/a11y から推論
+  const domResult = reasonFromDomAndA11y(dom, a11y, thenCondition)
+
+  if (domResult.status !== "inconclusive") {
+    return domResult
+  }
+
+  // Phase 2: INCONCLUSIVE の場合のみ Vision フォールバック
+  const screenshot = Read("step_XX_after.png")
   const visionResult = checkWithVision(screenshot, thenCondition)
-
-  // テキスト系はDOMも確認
-  if (containsQuotedText(thenCondition)) {
-    const targetText = extractQuotedText(thenCondition)
-    const textExists = checkTextInDOM(dom, targetText)
-
-    // 否定形の場合
-    if (/not|ない|いない/.test(thenCondition)) {
-      if (textExists) {
-        return {
-          status: "failed",
-          reason: `'${targetText}' is displayed on the page`,
-          manual_check_points: []
-        }
-      }
-    } else {
-      if (!textExists) {
-        // DOMに見つからない場合は INCONCLUSIVE として詳細を提供
-        return {
-          status: "inconclusive",
-          reason: `'${targetText}' was not found in the DOM`,
-          manual_check_points: [
-            `Check screenshot '${stepNum}_after.png' for '${targetText}'`,
-            "The text may be rendered dynamically or in an iframe",
-            "Check if the element is visible in the viewport"
-          ]
-        }
-      }
-    }
-  }
-
-  // 状態確認系はa11yツリーを使用
-  if (/enabled|disabled|checked|selected/.test(thenCondition)) {
-    const stateResult = checkStateInA11y(a11y, thenCondition)
-    if (stateResult.found) {
-      return stateResult
-    }
-  }
-
-  return {
-    status: visionResult.status,
-    reason: visionResult.reason,
-    manual_check_points: visionResult.manual_check_points || []
-  }
+  return visionResult
 }
 ```
 

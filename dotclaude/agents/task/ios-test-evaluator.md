@@ -45,7 +45,7 @@ steps_with_assertions = [s for s in steps if s.then]
 
 **重要: 検証はデバイスを使わないため、全アサーションを並列で処理すること。**
 
-#### 検証の3段階（strict → UIツリー推論 → Vision フォールバック）
+#### strict と通常の分岐
 
 ```
 # アサーションを分類
@@ -53,55 +53,35 @@ strict_assertions = [s for s in steps_with_assertions if s.strict]
 normal_assertions = [s for s in steps_with_assertions if not s.strict]
 ```
 
-**Phase 1: 全アサーションの UIツリーを並列読み込み（スクリーンショットはまだ読まない）**
+**strict アサーション → UIツリーのテキスト完全一致（AI 不要、即時判定）:**
 
 ```
+# strict: UIツリーだけ読み込む
 parallel Read:
-  uitree_step01 = Read("step_01_ui.json")
   uitree_step03 = Read("step_03_ui.json")
-  ... (全 then 条件があるステップ)
-```
+  ... (strict な then 条件のステップのみ)
 
-**Phase 2: strict アサーション → テキスト完全一致（AI 不要）**
-
-```
+# テキスト完全一致で判定
 for step in strict_assertions:
   target_text = extract_quoted_text(step.then)
   result = check_text_exact_match(uitree, target_text)  # PASS or FAIL
 ```
 
-**Phase 3: 通常アサーション → UIツリーから AI 推論（Vision 不要）**
+**通常アサーション → スクリーンショットを Vision で判定（1ステップで完了）:**
 
 ```
-# UIツリーのテキスト情報から then 条件を推論判定
-# AXLabel, AXValue, AXIdentifier, type, AXEnabled 等を総合的に判断
-for step in normal_assertions:
-  result = reason_from_uitree(uitree, step.then)
-  # → PASS / FAIL / INCONCLUSIVE
-```
+# 通常: スクリーンショットを並列読み込み
+parallel Read:
+  screenshot_step01 = Read("step_01_after.png")
+  screenshot_step03 = Read("step_03_after.png")
+  ... (通常の then 条件のステップ全て)
 
-UIツリーから判定できるケース（Vision 不要）:
-- `「東京本社」と表示されていること` → AXLabel/AXValue 検索
-- `エラーメッセージが表示されていないこと` → テキスト否定検索
-- `スイッチがONになっていること` → AXValue 状態確認
-- `リストに5件以上表示されていること` → 要素カウント
-- `ホーム画面が表示されていること` → ナビゲーション要素やタイトルから推論
-
-**Phase 4: INCONCLUSIVE のみ Vision フォールバック**
-
-```
-inconclusive_steps = [s for s in normal_assertions if s.result == "inconclusive"]
-
-if inconclusive_steps:
-  # INCONCLUSIVE のステップだけスクリーンショットを読み込む
-  parallel Read:
-    screenshot = Read("step_XX_after.png")
-    ... (INCONCLUSIVE のステップのみ)
-
-  # Vision で最終判定
-  parallel verify:
-    result = verify_with_vision(screenshot, step.then)
-    ...
+# 全スクリーンショットを並列で Vision 判定
+# 画像1枚で画面の全情報を把握でき、1ラウンドで判定完了
+parallel verify:
+  result_step01 = verify_with_vision(screenshot_step01, step01.then)
+  result_step03 = verify_with_vision(screenshot_step03, step03.then)
+  ... (全通常 then 条件)
 ```
 
 ```
@@ -112,15 +92,14 @@ for step, result in zip(all_assertions, all_results):
 
 #### 検証ルール
 
-- **strict**: UIツリーのテキスト完全一致。AI も Vision も不要
-- **通常**: UIツリーを AI が読んで推論。**スクリーンショットは読まない**
-- **フォールバック**: UIツリーから判断できない場合のみ Vision を使用
-- **並列実行**: 各 Phase 内のファイル読み込み・検証は全て並列で実行する
+- **strict**: UIツリーのテキスト完全一致。AI 不要、即時判定
+- **通常**: スクリーンショットを Vision で判定。**1ラウンドで完了**
+- **並列実行**: ファイル読み込み・検証は全て並列で実行する
 - **依存関係なし**: 各アサーションは他のアサーション結果に依存しない
 
 ### 3. iOS固有のUIツリー属性
 
-UIツリー推論時に参照する iOS 固有の属性：
+strict 検証時に参照する iOS 固有の属性：
 
 | 属性 | 用途 | 例 |
 |------|------|-----|
@@ -130,46 +109,47 @@ UIツリー推論時に参照する iOS 固有の属性：
 | `type` | 要素タイプ | "Button", "TextField", "Switch" |
 | `AXEnabled` | 有効/無効 | true, false |
 
-### 4. Vision検証（フォールバックのみ）
+### 4. Vision検証
 
-**Phase 3 で INCONCLUSIVE になったアサーションのみ**、スクリーンショットで最終判定する：
+スクリーンショットを確認し、自然言語の期待結果が満たされているか判定：
 
 ```
-検証対象: INCONCLUSIVE となったアサーション
+検証対象: "ホーム画面が表示されていること"
 
 プロンプト:
 「このスクリーンショットを確認してください。
- 期待結果: <then条件>
+ 期待結果: ホーム画面が表示されていること
 
  この期待結果は満たされていますか？
  - PASS: 期待通りの状態
  - FAIL: 期待と異なる状態
  - INCONCLUSIVE: 判断が難しい
 
- 結果と理由を答えてください。」
+ 結果と理由を答えてください。
+ INCONCLUSIVEの場合は、なぜ判断できないか、手動で確認すべきポイントも記載してください。」
 ```
 
 ### 5. 結果判定ロジック
 
 ```python
-def evaluate_assertion(then_condition, uitree):
+def evaluate_assertion(then_condition, screenshot, uitree=None):
     """
-    then 条件を評価（UIツリー推論 → Vision フォールバック）
+    then 条件を評価
 
     Returns:
         status: "passed" | "failed" | "inconclusive"
         reason: 判定理由
     """
-    # Phase 1: UIツリーから推論
-    uitree_result = reason_from_uitree(uitree, then_condition)
+    if is_strict:
+        # strict: テキスト完全一致
+        target_text = extract_quoted_text(then_condition)
+        text_exists = check_text_in_uitree(uitree, target_text)
+        if "ない" in then_condition or "いない" in then_condition:
+            return ("passed" if not text_exists else "failed"), reason
+        return ("passed" if text_exists else "failed"), reason
 
-    if uitree_result.status != "inconclusive":
-        return uitree_result.status, uitree_result.reason
-
-    # Phase 2: INCONCLUSIVE の場合のみ Vision フォールバック
-    screenshot = Read("step_XX_after.png")
-    vision_result = check_with_vision(screenshot, then_condition)
-    return vision_result.status, vision_result.reason
+    # 通常: Vision で判定
+    return check_with_vision(screenshot, then_condition)
 ```
 
 ## Output Format

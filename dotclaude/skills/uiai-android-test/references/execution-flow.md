@@ -266,6 +266,7 @@ for scenario_file in scenario_files:
   echo "=========================================="
 
   # --- force-ai: AI強制実行 + 再コンパイル ---
+  # MUST: force-ai でも scenario-compiler は必ず実行する
   if [ "$force_ai" = "true" ]; then
     Task: adb-test-runner
       scenario=$scenario_file
@@ -276,10 +277,10 @@ for scenario_file in scenario_files:
       result_dir=$BASE_OUTPUT_DIR/$scenario_name
       scenario=$scenario_file
 
+    # MUST: コンパイル（省略禁止）
     Task: scenario-compiler
       result_dir=$BASE_OUTPUT_DIR/$scenario_name
       scenario=$scenario_file
-      output_dir=.adb-test/compiled/
 
     collect_result($scenario_name, $result_dir)
     continue
@@ -316,17 +317,22 @@ for scenario_file in scenario_files:
   fi
 
   # --- compiled.json が無い or stale → AI実行 + コンパイル ---
+  # MUST: AI実行後は必ず scenario-compiler で compiled.json を生成すること
+  # この3ステップは省略不可のパイプラインである
   echo "First run: $scenario_name (AI execution + compile)"
 
+  # Step 1: AI実行
   Task: adb-test-runner
     scenario=$scenario_file
     device=$device
     output_dir=$BASE_OUTPUT_DIR/$scenario_name
 
+  # Step 2: 結果評価
   Task: adb-test-evaluator
     result_dir=$BASE_OUTPUT_DIR/$scenario_name
     scenario=$scenario_file
 
+  # Step 3: コンパイル（MUST - テスト結果に関わらず必ず実行）
   Task: scenario-compiler
     result_dir=$BASE_OUTPUT_DIR/$scenario_name
     scenario=$scenario_file

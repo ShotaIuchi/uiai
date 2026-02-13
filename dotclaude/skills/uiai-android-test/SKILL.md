@@ -118,6 +118,28 @@ for each scenario_file:
 - エラー隔離（1シナリオの失敗が他に影響しない）
 - 並列実行可能（独立したシナリオは同時実行可）
 
+### Auto-Compilation Requirement (MUST)
+
+**AI実行（adb-test-runner → adb-test-evaluator）を行った場合、必ず scenario-compiler を呼び出して compiled.json を自動生成すること。これはスキップ不可。**
+
+以下のすべてのケースでコンパイルを実行する:
+
+| ケース | コンパイル | 理由 |
+|--------|-----------|------|
+| compiled.json が存在しない（初回実行） | **MUST** | 次回以降の高速実行のため |
+| source_hash 不一致（YAML変更後） | **MUST** | 最新のYAMLに対応するIRを生成 |
+| `force-ai=true` 指定 | **MUST** | 明示的な再コンパイル要求 |
+| compiled 実行が成功した場合 | 不要 | 既に最新のIRが存在 |
+
+```
+# AI実行後の必須フロー（省略禁止）
+Task: adb-test-runner   → result.json 生成
+Task: adb-test-evaluator → 結果評価
+Task: scenario-compiler  → compiled.json 生成  ← これを絶対に省略しない
+```
+
+**注意**: evaluator でテストが失敗した場合でも、compiled.json は生成する。テスト結果とコンパイルは独立した処理である。
+
 ### Execution Modes
 
 | Mode | Trigger | Speed | AI Calls | Cost |

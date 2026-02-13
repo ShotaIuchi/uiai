@@ -181,17 +181,32 @@ def extract_metadata(step_result):
 ### 3. Then Classification
 
 ```python
-def classify_then(text, strict):
+def classify_then(text, strict, verify, step_result, result_dir):
     """
     Classify a 'then' assertion.
 
     Args:
         text: Original assertion text
         strict: Whether strict mode is enabled
+        verify: Verification mode override ('uitree', 'ai', 'screenshot', or None)
+        step_result: Step result from result.json (with evidence paths)
+        result_dir: Directory containing result.json and UITree XMLs
 
     Returns:
         Compiled strategy dict
     """
+
+    # 0. Explicit verify mode override
+    if verify == "ai":
+        return {
+            "strategy": "ai_checkpoint",
+            "assertion": text
+        }
+    if verify == "screenshot":
+        return {
+            "strategy": "screenshot_only",
+            "assertion": text
+        }
 
     # 1. Quoted text present - can be auto-promoted to strict
     quoted_match = re.search(r'「(.+?)」', text)
@@ -211,32 +226,114 @@ def classify_then(text, strict):
             "negate": negate
         }
 
-    # 2. Explicit strict mode but no quoted text
+    # 2. UITree fingerprint verification (DEFAULT for non-quoted assertions)
+    # Read the UITree XML captured during the first AI run
+    uitree_checks = try_generate_uitree_checks(text, step_result, result_dir)
+    if uitree_checks:
+        return {
+            "strategy": "uitree_verify",
+            "assertion": text,
+            "fallback_to_ai": False,
+            "checks": uitree_checks
+        }
+
+    # 3. Explicit strict mode but no quoted text
     if strict:
-        # Cannot do strict match without quoted text
         return {
             "strategy": "ai_checkpoint",
             "assertion": text,
             "hint": "strict mode requested but no quoted text available"
         }
 
-    # 3. Vision-based assertion (default)
+    # 4. Fallback: AI checkpoint (UITree data insufficient)
     return {
         "strategy": "ai_checkpoint",
         "assertion": text
     }
+
+
+def try_generate_uitree_checks(text, step_result, result_dir):
+    """
+    Attempt to generate uitree_verify checks from the UITree XML
+    captured during the first AI run.
+
+    Args:
+        text: Original assertion text (e.g. "ホーム画面が表示されていること")
+        step_result: Step result dict from result.json
+        result_dir: Directory containing UITree XML files
+
+    Returns:
+        List of check dicts if sufficient data, None otherwise.
+
+    Logic:
+        1. Read the UITree XML from the step's evidence
+        2. Use extract_fingerprint() to get texts, resource_ids, classes
+        3. Select 2-3 prominent texts (≥2 chars, non-dynamic)
+        4. Select 1-2 app-specific resource IDs (exclude android:id/)
+        5. Add structural widgets if present (RecyclerView, TabLayout, etc.)
+        6. Require at least 2 checks total to use uitree_verify
+        7. Return None if insufficient data (falls through to ai_checkpoint)
+    """
+    if not step_result:
+        return None
+
+    evidence = step_result.get("evidence", {})
+    uitree_file = evidence.get("uitree", "")
+    if not uitree_file or not result_dir:
+        return None
+
+    uitree_path = os.path.join(result_dir, uitree_file)
+    if not os.path.exists(uitree_path):
+        return None
+
+    # Parse UITree XML
+    with open(uitree_path, "r", encoding="utf-8") as f:
+        xml_content = f.read()
+    root = parse_uitree(xml_content)
+    fingerprint = extract_fingerprint(root)
+
+    checks = []
+
+    # Select 2-3 prominent texts
+    for t in fingerprint["texts"][:3]:
+        checks.append({
+            "type": "text_visible",
+            "value": t,
+            "match_type": "exact"
+        })
+
+    # Select 1-2 app-specific resource IDs
+    for rid in fingerprint["resource_ids"][:2]:
+        checks.append({
+            "type": "resource_id_exists",
+            "value": rid
+        })
+
+    # Add structural widgets
+    for cls in fingerprint["classes"][:2]:
+        checks.append({
+            "type": "class_exists",
+            "value": cls
+        })
+
+    # Require at least 2 checks to be meaningful
+    if len(checks) < 2:
+        return None
+
+    return checks
 ```
 
 ### 4. Compilation Process
 
 ```python
-def compile_scenario(scenario_yaml, result_json):
+def compile_scenario(scenario_yaml, result_json, result_dir):
     """
     Main compilation function.
 
     Args:
         scenario_yaml: Parsed YAML scenario
         result_json: Parsed result.json from first AI run
+        result_dir: Directory containing result.json and UITree XMLs
 
     Returns:
         compiled.json dict
@@ -254,6 +351,7 @@ def compile_scenario(scenario_yaml, result_json):
     }
 
     global_strict = scenario_yaml.get("config", {}).get("strict", False)
+    global_verify = scenario_yaml.get("config", {}).get("verify", None)
     step_index = 0
     result_steps = {s["index"]: s for s in result_json["steps"]}
 
@@ -290,7 +388,11 @@ def compile_scenario(scenario_yaml, result_json):
 
             elif "then" in action:
                 strict = action.get("strict", global_strict)
-                strategy = classify_then(action["then"], strict)
+                verify = action.get("verify", global_verify)
+                strategy = classify_then(
+                    action["then"], strict, verify,
+                    result_step, result_dir
+                )
                 compiled_step = {
                     "index": step_index,
                     "section": section_id,

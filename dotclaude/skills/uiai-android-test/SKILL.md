@@ -144,9 +144,34 @@ Task: scenario-compiler  → compiled.json 生成  ← これを絶対に省略�
 
 | Mode | Trigger | Speed | AI Calls | Cost |
 |------|---------|-------|----------|------|
-| Compiled (default) | compiled.json あり | 1-3s/step | AI checkpoints only | $ |
+| Compiled (default) | compiled.json あり | 1-3s/step | UITree不足分のみ | $ |
 | Compiled + skip-ai | `skip-ai=true` | 1-3s/step | None | $0 |
 | AI full | compiled.json なし or `force-ai=true` | 5-15s/step | Every step | $$$ |
+
+#### Verification Strategies (then) — Compiled Execution
+
+| Strategy | Method | When | skip-ai | AI |
+|----------|--------|------|---------|----|
+| `strict_text_match` | UITreeテキスト検索 | 引用テキスト `「XX」` あり | Runs | No |
+| `uitree_verify` | UITree指紋照合 | **コンパイル時デフォルト** | Runs | No |
+| `screenshot_only` | スクショのみ | `verify: screenshot` 指定時 | Runs | No |
+| `ai_checkpoint` | AI Vision | UITreeデータ不足 or `verify: ai` 指定時 | Skipped | Yes |
+
+#### verify オプション（then ステップ用）
+
+```yaml
+# デフォルト: uitree_verify（コンパイル時にUITreeデータから自動生成）
+# UITreeデータ不足の場合は ai_checkpoint にフォールバック
+
+steps:
+  - id: "確認"
+    actions:
+      - then: "ホーム画面が表示されていること"            # uitree_verify（デフォルト）
+      - then: "複雑なUIが正しいこと"
+        verify: ai                                        # 明示的にAI Vision検証
+      - then: "画面遷移したこと"
+        verify: screenshot                                # スクショのみ（検証なし）
+```
 
 詳細は [execution-flow.md](./references/execution-flow.md) を参照。
 
@@ -174,7 +199,7 @@ Task: scenario-compiler  → compiled.json 生成  ← これを絶対に省略�
 
 ### 厳格モード（strict）
 
-通常はVision APIで「意味的に」検証するが、`strict: true` を指定するとUIツリーのテキスト完全一致で検証する。
+通常はUITree指紋照合で検証するが、`strict: true` を指定するとUIツリーのテキスト完全一致で検証する。AI検証が必要な場合は `verify: ai` を指定する。
 
 ```yaml
 # シナリオ全体に適用
@@ -193,8 +218,10 @@ steps:
 
 | モード | 検証方法 | 用途 |
 |--------|----------|------|
-| 通常（デフォルト） | Vision API | 画面全体の雰囲気、複雑なUI |
+| 通常（デフォルト） | UITree指紋照合 | 画面状態のプログラム的検証 |
 | 厳格 | UIツリー完全一致 | 正確な文字列表示の確認 |
+| AI (`verify: ai`) | Vision API | 画面全体の雰囲気、複雑なUI |
+| スクショ (`verify: screenshot`) | スクリーンショットのみ | エビデンス記録のみ |
 
 **strictの優先順位**: 個別指定 > config.strict > false（デフォルト）
 

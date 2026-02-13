@@ -30,10 +30,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from backends.adb_backend import ADBBackend, ADBError
 from utils.uitree_parser import (
+    class_exists,
+    count_elements,
     find_by_text,
     find_edit_text,
     parse_uitree,
     resolve_element,
+    resource_id_exists,
     text_exists,
 )
 
@@ -406,6 +409,80 @@ class CompiledRunner:
                         "result": "failed",
                         "reason": f"Text '{search_text}' not found in UITree",
                     }
+
+        elif strategy == "uitree_verify":
+            root = parse_uitree(xml_content)
+            checks = compiled.get("checks", [])
+            fallback_to_ai = compiled.get("fallback_to_ai", False)
+            check_results = []
+            all_passed = True
+
+            for check in checks:
+                check_type = check.get("type", "")
+                check_passed = False
+
+                if check_type == "text_visible":
+                    value = self._interpolate(check.get("value", ""))
+                    match_type = check.get("match_type", "exact")
+                    check_passed = text_exists(root, value, match_type)
+
+                elif check_type == "text_not_visible":
+                    value = self._interpolate(check.get("value", ""))
+                    match_type = check.get("match_type", "exact")
+                    check_passed = not text_exists(root, value, match_type)
+
+                elif check_type == "resource_id_exists":
+                    value = check.get("value", "")
+                    check_passed = resource_id_exists(root, value)
+
+                elif check_type == "class_exists":
+                    value = check.get("value", "")
+                    check_passed = class_exists(root, value)
+
+                elif check_type == "element_count_gte":
+                    selector = check.get("selector", {})
+                    min_count = check.get("min_count", 1)
+                    actual = count_elements(root, selector)
+                    check_passed = actual >= min_count
+
+                check_results.append({
+                    "type": check_type,
+                    "passed": check_passed,
+                    "detail": check,
+                })
+
+                if not check_passed:
+                    all_passed = False
+
+            if all_passed:
+                step_result["verification"] = {
+                    "method": "uitree_verify",
+                    "result": "passed",
+                    "checks": check_results,
+                }
+            elif fallback_to_ai:
+                step_result["status"] = "ai_required"
+                step_result["verification"] = {
+                    "method": "uitree_verify",
+                    "result": "ai_required",
+                    "reason": "UITree checks failed, falling back to AI",
+                    "checks": check_results,
+                }
+            else:
+                step_result["status"] = "failed"
+                step_result["verification"] = {
+                    "method": "uitree_verify",
+                    "result": "failed",
+                    "reason": "UITree verification checks failed",
+                    "checks": check_results,
+                }
+
+        elif strategy == "screenshot_only":
+            step_result["verification"] = {
+                "method": "screenshot_only",
+                "result": "passed",
+                "reason": "Screenshot captured as evidence (no programmatic verification)",
+            }
 
         elif strategy == "ai_checkpoint":
             if self.skip_ai:

@@ -330,6 +330,67 @@ Used for `then` steps with quoted text (auto-promoted to strict) or explicit `st
 - `「XXX」が含まれていること` -> contains match
 - `「XXX」が表示されていないこと` -> negate=true
 
+### `uitree_verify` - UITree Fingerprint Verification
+
+```json
+{
+  "strategy": "uitree_verify",
+  "assertion": "ホーム画面が表示されていること",
+  "fallback_to_ai": false,
+  "checks": [
+    {"type": "text_visible", "value": "ホーム", "match_type": "exact"},
+    {"type": "resource_id_exists", "value": "com.example.app:id/bottom_nav"},
+    {"type": "class_exists", "value": "androidx.recyclerview.widget.RecyclerView"},
+    {"type": "text_not_visible", "value": "エラー", "match_type": "contains"},
+    {"type": "element_count_gte", "selector": {"class": "android.widget.TextView"}, "min_count": 3}
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `assertion` | string | Original `then` text |
+| `fallback_to_ai` | boolean | If true, fall back to AI on check failure (default: false) |
+| `checks` | array | List of programmatic checks to execute |
+
+#### Check Types
+
+| Type | Fields | Description |
+|------|--------|-------------|
+| `text_visible` | `value`, `match_type` | Assert text exists in UITree |
+| `text_not_visible` | `value`, `match_type` | Assert text does NOT exist in UITree |
+| `resource_id_exists` | `value` | Assert resource-id exists |
+| `class_exists` | `value` | Assert widget class exists |
+| `element_count_gte` | `selector`, `min_count` | Assert element count >= min_count |
+
+- `match_type`: `"exact"` (default) or `"contains"`
+- `selector`: Object with optional keys `class`, `resource_id`, `text`
+
+Used for `then` steps without quoted text where the UITree from the first AI run provides sufficient structural data for deterministic verification. Generated automatically by the scenario compiler when UITree fingerprint data is available.
+
+**Failure behavior**:
+- `fallback_to_ai: false` (default) -> check failure = `failed`
+- `fallback_to_ai: true` -> check failure = `ai_required` (falls back to AI)
+
+**Execution**: Dump UITree -> run all checks -> pass if all succeed
+
+### `screenshot_only` - Screenshot Evidence Only
+
+```json
+{
+  "strategy": "screenshot_only",
+  "assertion": "ホーム画面が表示されていること"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `assertion` | string | Original `then` text (for documentation only) |
+
+Used as fallback when UITree fingerprint data is insufficient for `uitree_verify`, or when explicitly requested via `verify: screenshot` in the YAML. Always passes — captures screenshot and UITree as evidence without programmatic or AI verification.
+
+**Execution**: Capture screenshot + UITree as evidence -> always pass
+
 ### `ai_checkpoint` - AI Vision Checkpoint
 
 ```json
@@ -345,7 +406,7 @@ Used for `then` steps with quoted text (auto-promoted to strict) or explicit `st
 | `assertion` | string | Original `then` text for AI evaluation |
 | `hint` | string | Optional hint from first run (AI's reasoning) |
 
-Used for `then` steps that require semantic/visual judgment (no quoted text, not strict).
+Used when UITree fingerprint data is insufficient for `uitree_verify`, or when explicitly requested via `verify: ai` in the YAML.
 
 **Execution**: Take screenshot -> invoke AI evaluator (or skip in `--skip-ai` mode)
 
@@ -406,7 +467,7 @@ At runtime, `(email)` is replaced with the resolved variable value.
 | Signal | Detection Method | Action |
 |--------|-----------------|--------|
 | YAML changed | `source_hash` mismatch | Recompile |
-| Element not found | UITree search failure at runtime | Fallback to AI for that step |
+| Element not found | UITree search failure at runtime | Mark step as failed (or fallback to AI if `fallback_to_ai: true`) |
 | Screen size changed | `device.screen_size` mismatch | Warn (scroll distances may differ) |
 | Compiled file age | Configurable TTL | Warn |
 
@@ -448,8 +509,13 @@ Per-step fallback: When an element is not found during compiled execution, only 
       "type": "then",
       "original": "ログイン画面が表示されていること",
       "compiled": {
-        "strategy": "ai_checkpoint",
-        "assertion": "ログイン画面が表示されていること"
+        "strategy": "uitree_verify",
+        "assertion": "ログイン画面が表示されていること",
+        "fallback_to_ai": false,
+        "checks": [
+          {"type": "text_visible", "value": "ログイン", "match_type": "exact"},
+          {"type": "resource_id_exists", "value": "com.example.app:id/email_input"}
+        ]
       }
     },
     {
@@ -508,8 +574,14 @@ Per-step fallback: When an element is not found during compiled execution, only 
       "type": "then",
       "original": "ホーム画面が表示されていること",
       "compiled": {
-        "strategy": "ai_checkpoint",
-        "assertion": "ホーム画面が表示されていること"
+        "strategy": "uitree_verify",
+        "assertion": "ホーム画面が表示されていること",
+        "fallback_to_ai": false,
+        "checks": [
+          {"type": "text_visible", "value": "ホーム", "match_type": "exact"},
+          {"type": "resource_id_exists", "value": "com.example.app:id/bottom_nav"},
+          {"type": "class_exists", "value": "androidx.recyclerview.widget.RecyclerView"}
+        ]
       }
     },
     {
@@ -528,7 +600,7 @@ Per-step fallback: When an element is not found during compiled execution, only 
       "type": "then",
       "original": "ユーザー名が表示されていること",
       "compiled": {
-        "strategy": "ai_checkpoint",
+        "strategy": "screenshot_only",
         "assertion": "ユーザー名が表示されていること"
       }
     }

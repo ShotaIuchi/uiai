@@ -201,6 +201,7 @@ Skipped: variables [password, api_key] require interactive input
 | `then` | 期待結果・検証内容（自然言語） |
 | `wait` | 待機時間（秒）、オプション |
 | `strict` | 厳格モード（この要素のみ完全一致検証、オプション）|
+| `verify` | 検証モード（`uitree` / `ai` / `screenshot`、オプション。`then` のみ有効）|
 
 **注意**: `do` と `then` は同一行に混在しない。それぞれ独立した行として記述する。
 
@@ -539,6 +540,7 @@ config:                          # オプション
   clear_data_before: true        # 実行前にアプリデータをクリア
   stop_app_after: true           # 実行後にアプリを停止
   strict: true                   # 厳格モード（全do/thenで完全一致検証）
+  verify: uitree                 # 検証モード（uitree/ai/screenshot、デフォルト: uitree）
 
 steps:
   - id: "テスト"
@@ -620,6 +622,45 @@ steps:
 1. **actions内の個別指定** (`do.strict` / `then.strict`) - 最優先
 2. **config.strict** - デフォルト値として使用
 3. **未指定** - `false`（通常モード）
+
+## 検証モード（verify）
+
+`then` ステップの検証方法を制御する。デフォルトは `uitree`（UITree指紋照合）。
+
+### 指定方法
+
+**シナリオ全体に適用**（config）:
+
+```yaml
+config:
+  verify: ai                     # 全thenでAI検証を使用
+```
+
+**then 個別に適用**:
+
+```yaml
+steps:
+  - id: "確認"
+    actions:
+      - then: "ホーム画面が表示されていること"
+        verify: ai               # このthenのみAI検証
+      - then: "エラーがないこと"
+        verify: screenshot       # スクショのみ（検証なし）
+```
+
+### 検証モード一覧
+
+| Mode | Description | skip-ai | AI Dependency |
+|------|-------------|---------|---------------|
+| `uitree` | UITree指紋照合（デフォルト）。UITreeデータ不足時はスクショのみにフォールバック | Runs | None |
+| `ai` | AI Vision検証。スクリーンショットをAIで評価 | Skipped | Required |
+| `screenshot` | スクリーンショットのみ保存。プログラム的検証なし | Runs | None |
+
+### verifyの優先順位
+
+1. **actions内の個別指定** (`then.verify`) - 最優先
+2. **config.verify** - デフォルト値として使用
+3. **未指定** - `uitree`（UITree指紋照合）
 
 ### 厳格モードでの検証対象
 

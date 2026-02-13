@@ -216,6 +216,113 @@ def text_exists(
     return False
 
 
+def resource_id_exists(root: ET.Element, resource_id: str) -> bool:
+    """Check if a resource-id exists anywhere in the UITree.
+
+    Args:
+        root: UITree root element.
+        resource_id: Resource ID to search for.
+
+    Returns:
+        True if the resource-id is found.
+    """
+    for node in root.iter("node"):
+        if node.get("resource-id", "") == resource_id:
+            return True
+    return False
+
+
+def class_exists(root: ET.Element, class_name: str) -> bool:
+    """Check if a widget class exists anywhere in the UITree.
+
+    Args:
+        root: UITree root element.
+        class_name: Fully qualified class name to search for.
+
+    Returns:
+        True if the class is found.
+    """
+    for node in root.iter("node"):
+        if node.get("class", "") == class_name:
+            return True
+    return False
+
+
+def count_elements(root: ET.Element, selector: dict) -> int:
+    """Count elements matching a selector in the UITree.
+
+    Args:
+        root: UITree root element.
+        selector: Dict with optional keys 'class', 'resource_id', 'text'.
+
+    Returns:
+        Number of matching elements.
+    """
+    count = 0
+    target_class = selector.get("class", "")
+    target_rid = selector.get("resource_id", "")
+    target_text = selector.get("text", "")
+
+    for node in root.iter("node"):
+        if target_class and node.get("class", "") != target_class:
+            continue
+        if target_rid and node.get("resource-id", "") != target_rid:
+            continue
+        if target_text and target_text not in node.get("text", ""):
+            continue
+        count += 1
+    return count
+
+
+def extract_fingerprint(root: ET.Element) -> dict:
+    """Extract a fingerprint from the UITree for verification.
+
+    Extracts prominent texts, app-specific resource IDs, and structural
+    widget classes to create a deterministic screen fingerprint.
+
+    Args:
+        root: UITree root element.
+
+    Returns:
+        Dict with 'texts', 'resource_ids', and 'classes' lists.
+    """
+    texts: list[str] = []
+    resource_ids: list[str] = []
+    classes: set[str] = set()
+
+    structural_widgets = {
+        "androidx.recyclerview.widget.RecyclerView",
+        "androidx.viewpager2.widget.ViewPager2",
+        "com.google.android.material.tabs.TabLayout",
+        "com.google.android.material.bottomnavigation.BottomNavigationView",
+        "com.google.android.material.navigation.NavigationView",
+        "androidx.drawerlayout.widget.DrawerLayout",
+        "com.google.android.material.appbar.AppBarLayout",
+    }
+
+    for node in root.iter("node"):
+        # Collect prominent texts (2+ chars, non-dynamic)
+        text = node.get("text", "")
+        if len(text) >= 2 and not text.isdigit() and ":" not in text:
+            texts.append(text)
+
+        # Collect app-specific resource IDs (exclude android:id/)
+        rid = node.get("resource-id", "")
+        if rid and not rid.startswith("android:id/"):
+            resource_ids.append(rid)
+
+        # Collect structural widget classes
+        cls = node.get("class", "")
+        if cls in structural_widgets:
+            classes.add(cls)
+
+    return {
+        "texts": texts,
+        "resource_ids": resource_ids,
+        "classes": sorted(classes),
+    }
+
+
 def resolve_element(
     root: ET.Element, compiled_step: dict
 ) -> UIElement | None:

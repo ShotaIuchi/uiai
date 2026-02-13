@@ -23,6 +23,7 @@ UIツリーを使って要素を自動特定し、エビデンス（スクリー
 
 - `.claude/skills/uiai-android-test/references/adb-commands.md`
 - `.claude/skills/uiai-android-test/references/scenario-schema.md`
+- `.claude/skills/uiai-android-test/references/compile-ir-schema.md`
 
 ## Capabilities
 
@@ -30,6 +31,7 @@ UIツリーを使って要素を自動特定し、エビデンス（スクリー
 2. **UI要素特定** - UIツリーからタップ対象の座標を自動計算
 3. **エビデンス収集** - 各ステップのスクリーンショット/UIツリーを保存
 4. **結果記録** - JSON形式で実行結果を出力
+5. **要素メタデータ収集** - コンパイル用に要素の詳細情報を記録
 
 ## Instructions
 
@@ -192,6 +194,70 @@ def get_center(bounds):
     return ((x1 + x2) // 2, (y1 + y2) // 2)
 ```
 
+### 5.1. Element Metadata Capture (for Compilation)
+
+Each `do` step that interacts with a UI element MUST capture extended metadata for later compilation. This metadata is stored in the `target_element` field of the step result.
+
+```python
+def capture_element_metadata(node, uitree):
+    """
+    Capture full element metadata for compiled replay.
+
+    Args:
+        node: The matched XML node
+        uitree: Full UITree XML
+
+    Returns:
+        dict with element metadata
+    """
+    metadata = {
+        "text": node.get("text", ""),
+        "resource_id": node.get("resource-id", ""),
+        "class": node.get("class", ""),
+        "content_desc": node.get("content-desc", ""),
+        "bounds": node.get("bounds", ""),
+        "center": get_center(node.get("bounds")),
+        "index": node.get("index", ""),
+        "checkable": node.get("checkable", "false"),
+        "clickable": node.get("clickable", "false"),
+        "focusable": node.get("focusable", "false"),
+        "parent_hierarchy": get_parent_classes(node, uitree)
+    }
+    return metadata
+
+def get_parent_classes(node, uitree):
+    """
+    Walk up the tree to collect parent class names.
+    Returns list from immediate parent to root.
+    """
+    parents = []
+    current = node
+    while current is not None:
+        parent = find_parent(current, uitree)
+        if parent is not None:
+            parents.append(parent.get("class", ""))
+        current = parent
+    return parents[:3]  # Keep at most 3 levels
+```
+
+**IMPORTANT**: For every `do` step where a UI element is found, the result JSON MUST include the full `target_element` with all metadata fields. This data enables the `scenario-compiler` agent to generate deterministic compiled scripts.
+
+**Metadata fields to capture**:
+
+| Field | Source | Purpose |
+|-------|--------|---------|
+| `text` | `text` attribute | Primary text search key |
+| `resource_id` | `resource-id` attribute | Most stable identifier |
+| `class` | `class` attribute | Widget type for fallback matching |
+| `content_desc` | `content-desc` attribute | Accessibility label |
+| `bounds` | `bounds` attribute | Position/size for coordinate calculation |
+| `center` | Computed from bounds | Tap coordinates |
+| `index` | `index` attribute | Sibling position |
+| `checkable` | `checkable` attribute | Widget capability |
+| `clickable` | `clickable` attribute | Widget capability |
+| `focusable` | `focusable` attribute | Widget capability (useful for input fields) |
+| `parent_hierarchy` | Traversed from node | Parent class names (up to 3 levels) |
+
 ### 6. エビデンス収集
 
 ```bash
@@ -247,8 +313,16 @@ capture_uitree() {
       "action_type": "tap",
       "target_element": {
         "text": "メニュー",
+        "resource_id": "com.example.app:id/menu_btn",
+        "class": "android.widget.ImageButton",
+        "content_desc": "menu",
         "bounds": "[0,100][100,200]",
-        "center": [50, 150]
+        "center": [50, 150],
+        "index": "0",
+        "checkable": "false",
+        "clickable": "true",
+        "focusable": "true",
+        "parent_hierarchy": ["android.widget.LinearLayout", "android.widget.FrameLayout"]
       },
       "adb_command": "adb shell input tap 50 150",
       "evidence": {

@@ -8,6 +8,8 @@
 # $ARGUMENTS からパラメータを抽出
 scenarios="${scenarios:-test/scenarios/**/*.yaml}"
 device="${device:-}"
+skip_ai="${skip_ai:-false}"
+force_ai="${force_ai:-false}"
 ```
 
 ## 前提条件確認
@@ -206,31 +208,155 @@ To run this test:
 
 ## シナリオ順次実行
 
+### 実行モード判定（デフォルト: Auto-Compiled）
+
+デフォルトで compiled.json を自動チェックする。`force-ai=true` の場合のみ AI 強制実行。
+
+```
+┌─────────────────────────────────────┐
+│       パラメータ確認                 │
+│   force-ai=true ?                   │
+└─────────────────┬───────────────────┘
+                  │
+       ┌──────────┼──────────┐
+       │                     │
+       ▼                     ▼
+┌──────┴──────┐       ┌──────┴──────────┐
+│ force-ai    │       │ Auto (default)  │
+│ → AI実行    │       │ compiled.json   │
+│ + 再コンパイル│       │ 存在チェック     │
+└─────────────┘       └────────┬────────┘
+                               │
+                    ┌──────────┼──────────┐
+                    │                     │
+                    ▼                     ▼
+             ┌──────┴──────┐       ┌──────┴──────┐
+             │ あり & hash  │       │ なし or     │
+             │ 一致         │       │ hash 不一致  │
+             └──────┬──────┘       └──────┬──────┘
+                    │                     │
+                    ▼                     ▼
+             ┌──────────────┐      ┌──────────────┐
+             │ Compiled     │      │ AI実行       │
+             │ Runner       │      │ + コンパイル   │
+             │ (高速実行)    │      │ (初回 or 更新) │
+             └──────┬───────┘      └──────────────┘
+                    │
+            ┌───────┼───────┐
+            │               │
+            ▼               ▼
+     ┌──────┴──────┐ ┌─────┴──────┐
+     │ skip-ai?    │ │ AI steps   │
+     │ → SKIP      │ │ → evaluator│
+     └─────────────┘ └────────────┘
+```
+
+### Default Flow (Auto-Compiled)
+
 各シナリオに対して以下を実行:
 
 ```
 for scenario_file in scenario_files:
-  # シナリオ名を抽出
   scenario_name=$(grep "^name:" $scenario_file | cut -d'"' -f2)
+  compiled_path="${scenario_file}.compiled.json"
 
   echo "=========================================="
   echo "Running: $scenario_name"
   echo "File: $scenario_file"
   echo "=========================================="
 
-  # 1. テスト実行（adb-test-runner エージェント起動）
+  # --- force-ai: AI強制実行 + 再コンパイル ---
+  if [ "$force_ai" = "true" ]; then
+    Task: adb-test-runner
+      scenario=$scenario_file
+      device=$device
+      output_dir=$BASE_OUTPUT_DIR/$scenario_name
+
+    Task: adb-test-evaluator
+      result_dir=$BASE_OUTPUT_DIR/$scenario_name
+      scenario=$scenario_file
+
+    Task: scenario-compiler
+      result_dir=$BASE_OUTPUT_DIR/$scenario_name
+      scenario=$scenario_file
+      output_dir=.adb-test/compiled/
+
+    collect_result($scenario_name, $result_dir)
+    continue
+  fi
+
+  # --- Auto: compiled.json の存在 & 鮮度チェック ---
+  if [ -f "$compiled_path" ]; then
+    source_hash=$(shasum -a 256 "$scenario_file" | awk '{print $1}')
+    compiled_hash=$(jq -r '.source_hash' "$compiled_path" | sed 's/sha256://')
+
+    if [ "$source_hash" = "$compiled_hash" ]; then
+      # Compiled Runner で高速実行
+      echo "Running compiled: $scenario_name"
+      python scripts/compiled_runner.py "$compiled_path" \
+        --device "$device" \
+        --output-dir "$BASE_OUTPUT_DIR/$scenario_name" \
+        ${skip_ai:+--skip-ai}
+
+      # AI checkpoints があれば evaluator を実行
+      if [ "$skip_ai" != "true" ]; then
+        ai_required=$(jq '[.steps[] | select(.status == "ai_required")] | length' \
+          "$BASE_OUTPUT_DIR/$scenario_name/result.json")
+
+        if [ "$ai_required" -gt 0 ]; then
+          Task: adb-test-evaluator
+            result_dir=$BASE_OUTPUT_DIR/$scenario_name
+            scenario=$scenario_file
+        fi
+      fi
+
+      collect_result($scenario_name, $result_dir)
+      continue
+    fi
+  fi
+
+  # --- compiled.json が無い or stale → AI実行 + コンパイル ---
+  echo "First run: $scenario_name (AI execution + compile)"
+
   Task: adb-test-runner
     scenario=$scenario_file
     device=$device
     output_dir=$BASE_OUTPUT_DIR/$scenario_name
 
-  # 2. 結果評価（adb-test-evaluator エージェント起動）
   Task: adb-test-evaluator
     result_dir=$BASE_OUTPUT_DIR/$scenario_name
     scenario=$scenario_file
 
-  # 3. 結果を収集
+  Task: scenario-compiler
+    result_dir=$BASE_OUTPUT_DIR/$scenario_name
+    scenario=$scenario_file
+
   collect_result($scenario_name, $result_dir)
+```
+
+### Staleness Detection
+
+| Signal | Detection | Action |
+|--------|-----------|--------|
+| YAML changed | `source_hash` mismatch | AI run + recompile |
+| Element not found | UITree search failure at runtime | Fallback to AI for that step only |
+| Screen size changed | `device.screen_size` mismatch | Warn (scroll coordinates may differ) |
+| `force-ai=true` | Always | AI run + recompile |
+
+### Per-Step AI Fallback
+
+When compiled runner marks a step as `ai_required`:
+
+```
+compiled_runner.py 実行
+  ├── step 1: app_launch → OK (compiled)
+  ├── step 2: tap_by_text → OK (compiled)
+  ├── step 3: ai_checkpoint → ai_required
+  ├── step 4: text_input → OK (compiled)
+  └── step 5: tap_by_text → ai_required (element not found)
+
+→ skip-ai=false: adb-test-evaluator が ai_required ステップのみ評価
+→ skip-ai=true:  ai_required ステップは SKIP 扱い
 ```
 
 ## 結果集約

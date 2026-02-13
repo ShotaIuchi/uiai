@@ -1,7 +1,7 @@
 ---
 name: uiai-android-test
 description: ADBを使用したAndroid UIテスト自動化スキル。自然言語でシナリオを記述し、スクリーンショットとUIツリーで結果を評価する。
-argument-hint: "scenarios=<path> [device=<device-id>] [strict=true]"
+argument-hint: "scenarios=<path> [device=<device-id>] [strict=true] [skip-ai=true] [force-ai=true]"
 arguments:
   - name: scenarios
     description: テストシナリオYAMLファイル（glob対応）
@@ -15,11 +15,20 @@ arguments:
     description: 全ステップで厳格モード（UIツリー完全一致検証）
     required: false
     default: "false"
+  - name: skip-ai
+    description: コンパイル実行時にAIチェックポイントをスキップ（最速モード）
+    required: false
+    default: "false"
+  - name: force-ai
+    description: コンパイル済みを無視してAIフル実行（再コンパイルも行う）
+    required: false
+    default: "false"
 references:
   - path: ./references/adb-commands.md
   - path: ./references/scenario-schema.md
   - path: ./references/environment.md
   - path: ./references/execution-flow.md
+  - path: ./references/compile-ir-schema.md
 ---
 
 # uiai Android Test
@@ -63,7 +72,7 @@ steps:
 ## 使用方法
 
 ```bash
-# テスト実行
+# テスト実行（compiled.json があれば自動で高速実行、なければ AI + コンパイル）
 /uiai-android-test scenarios=test/scenarios/login.yaml
 
 # 複数シナリオ
@@ -74,27 +83,48 @@ steps:
 
 # 厳格モード（全ステップで完全一致検証）
 /uiai-android-test scenarios=test/scenarios/login.yaml strict=true
+
+# AIチェックポイントをスキップして最速実行
+/uiai-android-test scenarios=test/scenarios/login.yaml skip-ai=true
+
+# 強制AI実行（compiled.json を無視、再コンパイルも行う）
+/uiai-android-test scenarios=test/scenarios/login.yaml force-ai=true
 ```
 
 ## Execution Requirement (MUST)
 
 **各シナリオは必ずTaskツールでサブエージェントとして実行すること。**
 
+### Default: Auto-Compiled Execution
+
+デフォルトで compiled.json の存在を自動チェックし、あれば高速実行する。
+
 ```
 for each scenario_file:
-  1. Task tool → adb-test-runner (実行)
-  2. Task tool → adb-test-evaluator (評価)
+  1. compiled.json が存在 & source_hash 一致 & !force-ai?
+     → Yes: python scripts/compiled_runner.py (高速実行)
+            ai_required ステップがあれば evaluator で評価
+     → No:  AI フル実行 → evaluator → scenario-compiler で compiled.json 生成
 ```
 
 | Agent | Purpose |
 |-------|---------|
-| `adb-test-runner` | シナリオ実行、エビデンス収集 |
+| `adb-test-runner` | AI シナリオ実行、エビデンス収集 |
 | `adb-test-evaluator` | 結果評価、レポート生成 |
+| `scenario-compiler` | result.json → compiled.json 変換 |
 
 複数シナリオがある場合、各シナリオを**独立したTaskとして実行**する。これにより：
 - コンテキスト分離（シナリオ間の状態汚染を防止）
 - エラー隔離（1シナリオの失敗が他に影響しない）
 - 並列実行可能（独立したシナリオは同時実行可）
+
+### Execution Modes
+
+| Mode | Trigger | Speed | AI Calls | Cost |
+|------|---------|-------|----------|------|
+| Compiled (default) | compiled.json あり | 1-3s/step | AI checkpoints only | $ |
+| Compiled + skip-ai | `skip-ai=true` | 1-3s/step | None | $0 |
+| AI full | compiled.json なし or `force-ai=true` | 5-15s/step | Every step | $$$ |
 
 詳細は [execution-flow.md](./references/execution-flow.md) を参照。
 
@@ -224,6 +254,7 @@ steps:
 
 - `adb-test-runner` - テスト実行とエビデンス収集
 - `adb-test-evaluator` - 結果評価とレポート生成
+- `scenario-compiler` - result.json → compiled.json 変換
 
 ## リファレンス
 
@@ -231,3 +262,4 @@ steps:
 - [ADBコマンド](./references/adb-commands.md)
 - [出力フォーマット](./references/output-format.md)
 - [環境チェック](./references/environment.md)
+- [コンパイルIRスキーマ](./references/compile-ir-schema.md)

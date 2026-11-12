@@ -133,10 +133,11 @@ uiai/
 │       ├── settle.py     # 画面の「変化待ち → 静止待ち」
 │       ├── ai/protocol.py      # AI への指示と応答の読み取り
 │       ├── ai/claude_code.py   # 既定: claude -p の持続セッション
-│       ├── ai/api.py           # 任意: ANTHROPIC_API_KEY で直接呼ぶ（段階 4）
+│       ├── ai/api.py           # 任意: ANTHROPIC_API_KEY で直接呼ぶ（段階 4 の予定。未着手）
 │       ├── drivers/{base,android,ios,web}.py   # ios は段階 3
 │       ├── events.py     # 失敗などのイベント出力（stdout と events.jsonl）
 │       ├── notify.py     # Webhook など
+│       ├── desktop.py    # OS のデスクトップ通知（段階 4）
 │       ├── redact.py     # 記録・通知から秘密の値を伏せる
 │       └── report.py
 │   └── tests/            # 単体テスト（偽の AI・偽のドライバでループの制御を確かめる）

@@ -1,7 +1,7 @@
 ---
 name: test
 description: 自然言語で書いたシナリオ YAML で、Android・iOS（Mac のシミュレータ）・Web の UI テストを実行する。AI がスクリーンショットを見て 1 ステップずつ操作・判定する。実行はバックグラウンドで進め、失敗はその場でチャットに知らせ、終わったら結果をまとめる。「UI テストを実行して」「このシナリオを走らせて」などで使う。
-argument-hint: "<シナリオかフォルダ>... [--platform android|ios|web|all] [--model haiku] [--var NAME=VALUE] [--serial <adb シリアル>] [--udid <シミュレータ>] [--parallel] [--headed]"
+argument-hint: "<シナリオかフォルダ>... [--platform android|ios|web|all] [--model haiku] [--rejudge-model sonnet|none] [--var NAME=VALUE] [--serial <adb シリアル>] [--udid <シミュレータ>] [--parallel] [--headed]"
 allowed-tools: Bash(uiai *), Bash(date *)
 ---
 

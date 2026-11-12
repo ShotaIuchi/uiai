@@ -34,7 +34,7 @@ uiai watch --run latest                # 実行中の失敗を 1 行ずつ表示
 uiai run <シナリオかフォルダ>... [--platform android|ios|web|all] [--model haiku] [--rejudge-model sonnet|none]
          [--serial <adb シリアル>]... [--udid <シミュレータ>]... [--parallel] [--browsers N]
          [--browser-path <chromium>] [--headed] [--var NAME=VALUE]... [--webhook URL] [--notify]
-         [--run-id ID] [--fail-on-warning] [--dry-run]
+         [--run-id ID] [--results-dir DIR] [--fail-on-warning] [--dry-run]
 ```
 
 - プラットフォームは `app` と接続中の対象（Android 端末・起動中の iOS シミュレータ）から決まる。複数の候補が残ったら `--platform` を求める
@@ -55,7 +55,7 @@ uiai run <シナリオかフォルダ>... [--platform android|ios|web|all] [--mo
 | 1 | 不合格か未実行のステップがある |
 | 2 | 最後まで実行できなかった（形式エラー、端末・ブラウザ・claude がない、変数の値がないなど） |
 
-結果は `.uiai/results/<run id>/` に出る。
+結果は `.uiai/results/<run id>/` に出る（置き場所は `--results-dir` で変えられる）。
 
 ```
 summary.md            全シナリオの結果
@@ -92,10 +92,10 @@ cd engine && uv run --no-project --with pyyaml==6.0.3 --with pillow==13.0.0 --wi
 | `uiai/cli.py` | `run` / `check` / `setup` / `watch` |
 | `uiai/scenario.py` | YAML の読み込み・検査（E0xx/W0xx）・変数・replay の展開 |
 | `uiai/platform.py` | 実行するプラットフォームの決定 |
-| `uiai/loop.py` | 実行ループ（`then` の判定・取り直し・観察・割り込みと逸脱の記録・失敗時の打ち切り） |
+| `uiai/loop.py` | 実行ループ（`then` の判定・取り直し・観察・割り込みと逸脱の記録・失敗時の打ち切り）。会話が大きくなったら作り直す（直前の入力が 5 万トークンを超えたら次のセクションの境目で、10 万トークンを超えたら次の `do` の前で）。待ち時間を過ぎた `then` の不合格は、別のモデルで判定し直す |
 | `uiai/settle.py` | 画面の「変化待ち → 静止待ち」、否定形の `then` の観察、判断後の画面変化の検出 |
 | `uiai/ai/protocol.py` | AI への指示と応答の読み取り |
-| `uiai/ai/claude_code.py` | `claude -p` の持続セッション（会話が 5 万トークンを超えたら、次のセクションの境目で作り直す） |
+| `uiai/ai/claude_code.py` | `claude -p` の持続セッション（stream-json で画像とテキストを送る。ツール・MCP・ユーザー設定は無効にする） |
 | `uiai/drivers/` | Android（adb。ASCII 以外の文字は uiautomator2 でクリップボードから貼り付ける）・iOS（`xcrun simctl` と AXe）・Web（Playwright） |
 | `uiai/events.py` / `notify.py` / `desktop.py` | イベント出力、Webhook、デスクトップ通知 |
 | `uiai/redact.py` | 秘密の値を伏せる |

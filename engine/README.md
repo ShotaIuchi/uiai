@@ -5,14 +5,14 @@
 
 - プログラムがループを回し、AI には 1 ステップにつき 1 回だけ判断させる（前の `then` の判定と次の操作を同時に返す）
 - 画面の入力はスクリーンショットだけ（UI ツリーは使わない）
-- AI は Claude Code（`claude -p`）経由。手元では Claude Code のログインで動く
+- AI は Claude Code（`claude -p`）経由。手元では Claude Code のログインで動く。`--backend api` で Anthropic API を直接呼ぶこともできる（実際の API では未検証）
 
 ## 前提
 
 | もの | 用途 |
 |---|---|
 | [uv](https://docs.astral.sh/uv/) | 唯一の前提。Python 本体と依存（版は `main.py` の先頭で固定）を自動で用意する |
-| Claude Code CLI（`claude`） | AI の呼び出し |
+| Claude Code CLI（`claude`） | AI の呼び出し（`--backend api` のときは不要。代わりに環境変数 `ANTHROPIC_API_KEY`） |
 | adb | Android を動かすとき |
 | Xcode と [AXe](https://github.com/cameroncooke/AXe) | iOS シミュレータを動かすとき（Mac のみ）。AXe は `brew install cameroncooke/axe/axe`（v2.0.3 で確認） |
 | Chromium | Web を動かすとき。`uiai setup` で取得する |
@@ -32,6 +32,7 @@ uiai watch --run latest                # 実行中の失敗を 1 行ずつ表示
 
 ```
 uiai run <シナリオかフォルダ>... [--platform android|ios|web|all] [--model haiku] [--rejudge-model sonnet|none]
+         [--backend claude-code|api]
          [--serial <adb シリアル>]... [--udid <シミュレータ>]... [--parallel] [--browsers N]
          [--browser-path <chromium>] [--headed] [--var NAME=VALUE]... [--webhook URL] [--notify]
          [--run-id ID] [--results-dir DIR] [--fail-on-warning] [--dry-run]
@@ -41,6 +42,7 @@ uiai run <シナリオかフォルダ>... [--platform android|ios|web|all] [--mo
 - Android 端末が複数つながっていれば `--serial`、iOS シミュレータが複数起動していれば `--udid` で選ぶ
 - 値のない変数は、`--var`、`env:` の環境変数、対話入力の順に解決する。どれもなければ、そのシナリオは実行しない。実行の前に、全シナリオの分をまとめて解決する
 - `then` が待ち時間を過ぎても不合格のときは、確定する前に `--rejudge-model`（既定 sonnet）が同じ画像で判定し直す。sonnet が合格とすれば合格にするが、判定が分かれたことを警告に残す。`none` で無効
+- `--backend api`（または環境変数 `UIAI_BACKEND=api`）で、Claude Code を通さずに Anthropic API を直接呼ぶ。`ANTHROPIC_API_KEY` が要り、従量課金になる。画像は最新の 2 枚だけを送るので、入力が伸びにくい。実際の API では未検証（偽の応答での単体テストまで）
 - `--parallel` は端末ごとに並列で実行する。Android は接続中の全端末、iOS は起動中の全シミュレータ（`--serial`・`--udid` を繰り返して絞れる）、Web は `--browsers` 個（既定 2）のブラウザ。シナリオは空いた端末から順に割り当てる（同じシナリオを全端末で回すのではない）。表示の各行には端末名が付く
 - `--webhook`（または環境変数 `UIAI_WEBHOOK_URL`）を指定すると、失敗を `{"text": ...}` で POST する
 - `--notify`（または環境変数 `UIAI_NOTIFY=1`）を指定すると、失敗（1 回の実行で 5 件まで）と終了を OS のデスクトップ通知でも知らせる。Claude Code を使わずに手元で実行するとき用（mac は osascript、Linux は notify-send、Windows は PowerShell。Windows は未検証）
@@ -96,6 +98,7 @@ cd engine && uv run --no-project --with pyyaml==6.0.3 --with pillow==13.0.0 --wi
 | `uiai/settle.py` | 画面の「変化待ち → 静止待ち」、否定形の `then` の観察、判断後の画面変化の検出 |
 | `uiai/ai/protocol.py` | AI への指示と応答の読み取り |
 | `uiai/ai/claude_code.py` | `claude -p` の持続セッション（stream-json で画像とテキストを送る。ツール・MCP・ユーザー設定は無効にする） |
+| `uiai/ai/api.py` | Anthropic API を直接呼ぶ（`--backend api`）。標準ライブラリだけで呼び、画像は最新 2 枚だけ送り、プロンプトキャッシュを使う。実際の API では未検証 |
 | `uiai/drivers/` | Android（adb。ASCII 以外の文字は uiautomator2 でクリップボードから貼り付ける）・iOS（`xcrun simctl` と AXe）・Web（Playwright） |
 | `uiai/events.py` / `notify.py` / `desktop.py` | イベント出力、Webhook、デスクトップ通知 |
 | `uiai/redact.py` | 秘密の値を伏せる |

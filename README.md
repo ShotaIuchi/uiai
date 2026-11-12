@@ -129,6 +129,7 @@ uiai run login.yaml --platform web     # 実行（終了コード 0: 合格 / 1:
 uiai run login.yaml --dry-run          # 実行せずに、対象と値のない変数を確かめる
 uiai run scenarios/ --parallel         # 接続中の全端末（Web は 2 ブラウザ）に割り振って並列に実行
 uiai run scenarios/ --notify           # 失敗と終了を OS のデスクトップ通知でも知らせる（Claude Code の外で使うとき）
+uiai run scenarios/ --backend api      # Claude Code を通さず Anthropic API を直接呼ぶ（ANTHROPIC_API_KEY が要る。従量課金。未検証）
 uiai check scenarios/                  # 形式の検査
 uiai watch --run latest                # 実行中の失敗を 1 行ずつ表示
 uiai setup                             # 実行環境の確認と Chromium の取得

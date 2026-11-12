@@ -10,7 +10,7 @@ Claude Code の中では `uiai` コマンドに PATH が通るが、CI では通
 |---|---|
 | uv | `astral-sh/setup-uv` など |
 | Claude Code CLI | `curl -fsSL https://claude.ai/install.sh \| bash` |
-| Claude の認証 | 次のどちらか一方を CI のシークレットに入れる。`claude setup-token` で発行した長期トークン（環境変数 `CLAUDE_CODE_OAUTH_TOKEN`）か、API キー（`ANTHROPIC_API_KEY`） |
+| Claude の認証 | 次のどちらか一方を CI のシークレットに入れる。`claude setup-token` で発行した長期トークン（環境変数 `CLAUDE_CODE_OAUTH_TOKEN`）か、API キー（`ANTHROPIC_API_KEY`）。API キーなら、`uiai run --backend api` で Claude Code CLI を入れずに動かすこともできる（従量課金。実際の API では未検証） |
 | Chromium（Web） | `uiai setup --with-deps`（Linux では OS のライブラリも入れる。sudo が要る） |
 | エミュレータ（Android） | `reactivecircus/android-emulator-runner` など。速さは未計測 |
 

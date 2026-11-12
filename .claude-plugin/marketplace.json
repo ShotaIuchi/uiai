@@ -1,0 +1,14 @@
+{
+  "name": "uiai",
+  "description": "uiai プラグインのマーケットプレイス",
+  "owner": {
+    "name": "Shota Iuchi"
+  },
+  "plugins": [
+    {
+      "name": "uiai",
+      "source": "./",
+      "description": "AI駆動のクロスプラットフォームUIテスト自動化（Android / iOS / Web）"
+    }
+  ]
+}

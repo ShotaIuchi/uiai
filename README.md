@@ -11,20 +11,40 @@ AI駆動のクロスプラットフォームUIテスト自動化ツール。自�
 
 ## 対応プラットフォーム
 
-| プラットフォーム | ステータス | スキル名 |
+| プラットフォーム | ステータス | コマンド |
 |-----------------|-----------|---------|
-| Android | ✅ 対応 | `uiai-android-test` |
-| iOS | ✅ 対応 | `uiai-ios-test` |
-| Web | ✅ 対応 | `uiai-web-test` |
+| Android | ✅ 対応 | `/uiai:android-test` |
+| iOS | ✅ 対応 | `/uiai:ios-test` |
+| Web | ✅ 対応 | `/uiai:web-test` |
 
 ## ユーティリティスキル
 
-| スキル名 | 説明 |
+| コマンド | 説明 |
 |---------|------|
-| `uiai-record-to-scenario` | 端末を操作しながら録画し、その録画からシナリオYAMLを自動生成（Android） |
-| `uiai-video-to-scenario` | 画面録画動画からシナリオYAMLを自動生成 |
-| `uiai-scenario-check` | シナリオYAMLの検証・自動修正 |
-| `uiai-create` | 対話形式で新しいスキルを作成 |
+| `/uiai:record-to-scenario` | 端末を操作しながら録画し、その録画からシナリオYAMLを自動生成（Android） |
+| `/uiai:video-to-scenario` | 画面録画動画からシナリオYAMLを自動生成 |
+| `/uiai:scenario-check` | シナリオYAMLの検証・自動修正 |
+| `/uiai:create` | 対話形式で新しいスキルを作成 |
+
+## インストール
+
+uiai は Claude Code プラグインとして配布している。
+
+```bash
+# Claude Code 内で実行
+/plugin marketplace add ShotaIuchi/uiai
+/plugin install uiai@uiai
+```
+
+ローカルのチェックアウトをそのまま読み込む場合（開発時）:
+
+```bash
+claude --plugin-dir /path/to/uiai
+```
+
+> 旧方式（amu で `dotclaude/` を `~/.claude` にリンク）で導入済みの場合は、
+> `~/.claude/skills/uiai-*` と `~/.claude/agents/task/` 配下の uiai エージェントのリンクを削除すること。
+> 残したままだとスキルが二重に読み込まれる。
 
 ## シナリオ例
 
@@ -171,81 +191,81 @@ steps:
 
 ```bash
 # Claude Code内で実行
-/uiai-android-test scenarios=test/scenarios/login.yaml
+/uiai:android-test scenarios=test/scenarios/login.yaml
 
 # 複数シナリオ
-/uiai-android-test scenarios=test/scenarios/*.yaml
+/uiai:android-test scenarios=test/scenarios/*.yaml
 
 # デバイス指定
-/uiai-android-test scenarios=test/scenarios/login.yaml device=emulator-5554
+/uiai:android-test scenarios=test/scenarios/login.yaml device=emulator-5554
 ```
 
 ### iOS
 
 ```bash
 # Claude Code内で実行
-/uiai-ios-test scenarios=test/scenarios/login.yaml
+/uiai:ios-test scenarios=test/scenarios/login.yaml
 
 # 複数シナリオ
-/uiai-ios-test scenarios=test/scenarios/*.yaml
+/uiai:ios-test scenarios=test/scenarios/*.yaml
 
 # シミュレータ指定
-/uiai-ios-test scenarios=test/scenarios/login.yaml simulator=<UDID>
+/uiai:ios-test scenarios=test/scenarios/login.yaml simulator=<UDID>
 
 # 起動中のシミュレータを使用
-/uiai-ios-test scenarios=test/scenarios/login.yaml simulator=booted
+/uiai:ios-test scenarios=test/scenarios/login.yaml simulator=booted
 ```
 
 ### Web
 
 ```bash
 # Claude Code内で実行
-/uiai-web-test scenarios=test/scenarios/login.yaml
+/uiai:web-test scenarios=test/scenarios/login.yaml
 
 # 複数シナリオ
-/uiai-web-test scenarios=test/scenarios/*.yaml
+/uiai:web-test scenarios=test/scenarios/*.yaml
 
 # ブラウザ指定
-/uiai-web-test scenarios=test/scenarios/login.yaml browser=firefox
+/uiai:web-test scenarios=test/scenarios/login.yaml browser=firefox
 
 # ヘッドレスモード無効（ブラウザ表示）
-/uiai-web-test scenarios=test/scenarios/login.yaml headless=false
+/uiai:web-test scenarios=test/scenarios/login.yaml headless=false
 ```
 
 ### シナリオ検証
 
 ```bash
 # シナリオYAMLの検証
-/uiai-scenario-check scenarios=test/scenarios/login.yaml
+/uiai:scenario-check scenarios=test/scenarios/login.yaml
 
 # 自動修正（ドライラン）
-/uiai-scenario-check scenarios=test/scenarios/*.yaml fix=true dry-run=true
+/uiai:scenario-check scenarios=test/scenarios/*.yaml fix=true dry-run=true
 
 # 自動修正（実行）
-/uiai-scenario-check scenarios=test/scenarios/*.yaml fix=true
+/uiai:scenario-check scenarios=test/scenarios/*.yaml fix=true
 ```
 
 ### スキル作成
 
 ```bash
 # 対話形式で新しいスキルを作成
-/uiai-create
+/uiai:create
 
 # スキル名を指定して開始
-/uiai-create name=uiai-web-test
+/uiai:create name=selenium-test
 ```
 
 ### 動画からシナリオ生成
 
 ```bash
 # 画面録画からシナリオを自動生成
-/uiai-video-to-scenario video=recordings/login.mp4
+/uiai:video-to-scenario video=recordings/login.mp4
 
 # プラットフォーム指定
-/uiai-video-to-scenario video=recordings/ios-flow.mov platform=ios
+/uiai:video-to-scenario video=recordings/ios-flow.mov platform=ios
 
 # 出力先指定
-/uiai-video-to-scenario video=recordings/test.mp4 output=scenarios/my-test.yaml
+/uiai:video-to-scenario video=recordings/test.mp4 output=scenarios/my-test.yaml
 ```
 
 ## 前提条件
@@ -289,55 +309,33 @@ npx playwright install
 brew install ffmpeg
 ```
 
-## 推奨ツール
-
-### amu（シンボリックリンク管理）
-
-[amu](https://github.com/ShotaIuchi/amu)を使用すると、`dotclaude/`ディレクトリの管理が容易になります。
-
-```bash
-# インストール
-brew install ShotaIuchi/tap/amu
-
-# dotclaudeを~/.claudeにリンク
-amu add dotclaude ~/.claude
-```
-
 ## ディレクトリ構造
 
 ```
-dotclaude/
-├── skills/
-│   ├── uiai-android-test/     # Androidテストスキル
-│   │   ├── SKILL.md
-│   │   └── references/
-│   ├── uiai-ios-test/         # iOSテストスキル
-│   │   ├── SKILL.md
-│   │   └── references/
-│   ├── uiai-web-test/         # Webテストスキル
-│   │   ├── SKILL.md
-│   │   └── references/
-│   ├── uiai-scenario-check/   # シナリオ検証スキル
-│   │   ├── SKILL.md
-│   │   └── references/
-│   ├── uiai-video-to-scenario/  # 動画→シナリオ生成
-│   │   ├── SKILL.md
-│   │   └── references/
-│   └── uiai-create/           # スキル作成ウィザード
-│       ├── SKILL.md
-│       └── references/
-├── agents/
-│   └── task/
-│       ├── adb-test-runner.md
-│       ├── adb-test-evaluator.md
-│       ├── ios-test-runner.md
-│       ├── ios-test-evaluator.md
-│       ├── web-test-runner.md
-│       ├── web-test-evaluator.md
-│       ├── video-frame-extractor.md
-│       ├── video-frame-analyzer.md
-│       └── video-scenario-generator.md
-└── rules/
+.
+├── .claude-plugin/
+│   ├── plugin.json            # プラグインマニフェスト
+│   └── marketplace.json       # マーケットプレイス定義（/plugin marketplace add 用）
+├── skills/                    # /uiai:<skill-name> で呼び出し
+│   ├── android-test/          # Androidテストスキル
+│   ├── ios-test/              # iOSテストスキル
+│   ├── web-test/              # Webテストスキル
+│   ├── scenario-check/        # シナリオ検証スキル
+│   ├── video-to-scenario/     # 動画→シナリオ生成
+│   ├── record-to-scenario/    # 録画→シナリオ生成
+│   └── create/                # スキル作成ウィザード
+├── agents/                    # uiai:<agent-name> として登録されるサブエージェント
+│   ├── adb-test-runner.md
+│   ├── adb-test-evaluator.md
+│   ├── ios-test-runner.md
+│   ├── ios-test-evaluator.md
+│   ├── web-test-runner.md
+│   ├── web-test-evaluator.md
+│   ├── scenario-compiler.md
+│   ├── video-frame-extractor.md
+│   ├── video-frame-analyzer.md
+│   └── video-scenario-generator.md
+└── scripts/                   # Compiled Runner（${CLAUDE_PLUGIN_ROOT}/scripts から参照）
 ```
 
 ## 出力

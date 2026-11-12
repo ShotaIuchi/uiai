@@ -35,15 +35,19 @@ class Settler:
     change_timeout = 2.0
     stable_timeout = 3.0
 
-    def __init__(self, ignore_top: float = 0.0):
+    def __init__(self, ignore_top: float = 0.0, ignore_right: float = 0.0):
         self.ignore_top = ignore_top   # top fraction ignored (status bar clock etc.)
+        # right fraction ignored: Android/iOS show a scroll indicator for ~1 s after the content
+        # stopped, which made the stale check re-ask the AI for nothing (phase 3)
+        self.ignore_right = ignore_right
         self.acted = False
         self._last = None              # cropped grayscale of the last settled frame
 
     # -- pixel comparison ---------------------------------------------------
     def _gray(self, im: Image.Image) -> Image.Image:
         top = int(im.height * self.ignore_top)
-        return im.crop((0, top, im.width, im.height)).convert("L")
+        right = im.width - int(im.width * self.ignore_right)
+        return im.crop((0, top, right, im.height)).convert("L")
 
     @staticmethod
     def _diff_px(a: Image.Image, b: Image.Image) -> int:

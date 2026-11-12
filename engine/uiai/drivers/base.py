@@ -30,8 +30,8 @@ class Driver:
     wait_s = 1.0            # duration of a "wait" action
     iw = ih = 0             # size of the screenshot sent to the AI
 
-    def __init__(self, ignore_top: float = 0.0):
-        self.settler = Settler(ignore_top)
+    def __init__(self, ignore_top: float = 0.0, ignore_right: float = 0.0):
+        self.settler = Settler(ignore_top, ignore_right)
 
     # -- to implement --------------------------------------------------------
     def grab(self) -> Image.Image:

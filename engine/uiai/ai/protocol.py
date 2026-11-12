@@ -57,6 +57,48 @@ Judging `then`:
 """
 
 
+STRICT_RULE = """- [strict] assertion: exact character-by-character match. Distinguish full-width/half-width characters, ー/-/−,
+  O/0, l/1/I, the number of spaces and punctuation. Put the exact text you read in "read". If the text is
+  truncated (…), masked, cut off or otherwise not fully readable, pass=false and say so. Never guess."""
+
+# Re-judging a failed `then` with a second model before it is confirmed (design doc 10). A fresh conversation
+# each time: the verdict must not lean on earlier ones.
+JUDGE_SYSTEM = """You check whether one assertion holds on a screenshot of {desc} ({iw}x{ih} px).
+Reply with ONLY one JSON object, no prose, no code fences:
+{{"pass":true|false,"reason":"<short>","read":"<strict only: the exact text you read>"}}
+- Judge only from this screenshot. The assertion describes the expected state right after the given step
+  (the step has already been carried out).
+- If the assertion says something is NOT shown, pass=true when it is absent from the screenshot.
+- Write the reason in the language of the assertion.
+""" + STRICT_RULE + "\n"
+
+
+def judge_system_prompt(desc: str, iw: int, ih: int) -> str:
+    return JUDGE_SYSTEM.format(desc=desc, iw=iw, ih=ih)
+
+
+def build_judge_message(then: str, strict: bool, after_do: str | None) -> str:
+    return "\n".join([f"step just carried out: {after_do or '(none)'}",
+                      "assertion: " + then + (" [strict]" if strict else ""),
+                      "screen: (see the screenshot)"])
+
+
+def parse_judge(text: str) -> dict | None:
+    """{"pass": bool, "reason": str, "read": str|None} from a re-judge reply, or None."""
+    start = text.find("{")
+    dec = json.JSONDecoder()
+    while start >= 0:
+        try:
+            obj, _ = dec.raw_decode(text[start:])
+        except json.JSONDecodeError:
+            obj = None
+        if isinstance(obj, dict) and "pass" in obj:
+            return {"pass": obj.get("pass") in (True, "true", "True"), "reason": str(obj.get("reason") or ""),
+                    "read": obj.get("read") or None}
+        start = text.find("{", start + 1)
+    return None
+
+
 def system_prompt(desc: str, iw: int, ih: int, allow: list[str], secrets: list[str] | None = None) -> str:
     allow_s = json.dumps(allow, ensure_ascii=False) if allow else "(none)"
     secrets_s = ""

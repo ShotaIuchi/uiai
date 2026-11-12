@@ -127,7 +127,7 @@ steps:
 """
 
     def script(msg, n):
-        if "tap B" in msg:
+        if "\ndo: tap B" in msg:  # not the "- [A] do: tap B -> FAILED" history line of section B
             return reply({"type": "fail", "reason": "no B"})
         if "only judge" in msg:
             return reply({"type": "none"}, verify=[v("Z is shown")])
@@ -421,3 +421,146 @@ def test_scenario_timeout_fails_the_current_do(make_run, clock):
     res, _, _, _ = make_run(y, script)
     assert res.steps[0].status == "fail" and "config.timeout" in res.steps[0].reason
     assert res.steps[3].status == "not_run"
+
+
+
+TWO_SECTIONS = """
+name: t
+app: "http://x"
+steps:
+  - id: A
+    actions:
+      - do: "open the app"
+      - do: "tap B"
+      - then: "Y is shown"
+  - id: C
+    actions:
+      - do: "tap D"
+      - do: "tap E"
+      - then: "Z is shown"
+"""
+
+
+def rotate_at(monkeypatch, section, anywhere):
+    import uiai.loop as loop_mod
+
+    monkeypatch.setattr(loop_mod, "ROTATE_AT_SECTION", section)
+    monkeypatch.setattr(loop_mod, "ROTATE_ANYWHERE", anywhere)
+
+
+def test_small_conversations_are_not_rotated(make_run):
+    res, _, ais, _ = make_run(TWO_SECTIONS, lambda msg, n: reply(verify=[v("Y is shown")] if '"Y is' in msg else
+                                                                 [v("Z is shown")] if '"Z is' in msg else []),
+                              fresh_ai=True)
+    assert res.status == "pass" and len(ais) == 1
+
+
+def test_a_large_conversation_is_rotated_at_the_next_section_after_judging_pending_thens(make_run, monkeypatch):
+    rotate_at(monkeypatch, section=2000, anywhere=10**9)  # FakeAI: call n reports n*1000 input tokens
+
+    def script(msg, n):
+        if '"Y is shown"' in msg:
+            assert "only judge" in msg  # judged on its own in the old conversation, not with "tap D"
+            return reply({"type": "none"}, verify=[v("Y is shown")])
+        if '"Z is shown"' in msg:
+            return reply({"type": "none"}, verify=[v("Z is shown")])
+        return reply()
+
+    res, drv, ais, _ = make_run(TWO_SECTIONS, script, fresh_ai=True)
+    assert res.status == "pass"
+    assert len(ais) == 2 and all(a.closed for a in ais)
+    first_c = ais[1].msgs[0]
+    assert first_c.startswith("Earlier steps") and "- [A] then: Y is shown -> pass" in first_c
+    assert "\ndo: tap D" in first_c and '"Y is shown"' not in first_c
+    assert all("Earlier steps" not in m for m in ais[0].msgs + ais[1].msgs[1:])
+    assert [c["kind"] for c in res.calls] == ["do", "do", "judge", "do", "do", "judge"]
+    assert [c["session"] for c in res.calls] == [1, 1, 1, 2, 2, 2]
+
+
+def test_a_very_large_conversation_is_rotated_between_dos_but_never_inside_a_do(make_run, monkeypatch):
+    rotate_at(monkeypatch, section=10**9, anywhere=2000)
+    yaml = """
+name: t
+app: "http://x"
+steps:
+  - id: A
+    actions:
+      - do: "one"
+      - do: "two"
+      - do: "three"
+"""
+
+    def script(msg, n):
+        if "\ndo: two" in msg and "action 3" not in msg:  # "two" takes three actions
+            return reply(done=False)
+        return reply()
+
+    res, drv, ais, _ = make_run(yaml, script, fresh_ai=True)
+    assert res.status == "pass"
+    # one(1 call) -> two: rotation needs 2000 tokens, so two runs in conversation 1 (3 calls, never
+    # rotated inside) -> new conversation before "three"
+    assert [c["session"] for c in res.calls] == [1, 1, 1, 1, 2]
+    assert "- [A] do: two -> done" in ais[1].msgs[0]
+
+
+def test_an_action_held_back_during_a_recheck_is_reported_as_not_executed(make_run):
+    def script(msg, n):
+        if n == 1:
+            return reply({"type": "launch"})
+        if n == 2:
+            return reply({"type": "tap", "x": 5, "y": 5}, verify=[v("X is shown", False)])
+        if n == 3:
+            assert "previous action: tap was NOT executed" in msg
+            return reply(verify=[v("X is shown")])
+        return reply({"type": "none"}, verify=[v("Y is shown")])
+
+    res, drv, ai, _ = make_run(BASIC, script)
+    assert res.status == "pass"
+
+
+def _x_never_passes(msg, n):
+    if n == 1:
+        return reply({"type": "launch"})
+    if '"X is shown"' in msg:
+        return reply(verify=[v("X is shown", False)])
+    return reply({"type": "none"}, verify=[v("Y is shown")])
+
+
+def test_a_then_about_to_fail_passes_on_rejudge_with_a_warning(make_run, clock):
+    seen = []
+
+    def rejudge(msg):
+        seen.append(msg)
+        return {"pass": True, "reason": "X is there"}
+
+    res, drv, ai, ev = make_run(BASIC, _x_never_passes, rejudge=rejudge)
+    x = res.steps[1]
+    assert x.status == "pass" and x.reason == "X is there"
+    assert res.status == "pass_warn" and any("判定が分かれた" in w for w in x.warnings)
+    assert len(seen) == 1 and "step just carried out: open the app" in seen[0] and "assertion: X is shown" in seen[0]
+    assert not [e for e in ev if e["type"] == "fail"]
+    rj = [c for c in res.calls if c.get("rejudge")]
+    assert len(rj) == 1 and rj[0]["rejudge"][0]["model"] == "sonnet" and rj[0]["rejudge"][0]["pass"] is True
+
+
+def test_a_then_failing_on_rejudge_too_fails_with_both_reasons(make_run, clock):
+    res, drv, ai, ev = make_run(BASIC, _x_never_passes, rejudge=lambda m: '{"pass": false, "reason": "no X"}')
+    x = res.steps[1]
+    assert x.status == "fail" and "再判定（sonnet）でも不合格: no X" in x.reason and not x.warnings
+    assert [e["kind"] for e in ev if e["type"] == "fail"] == ["then"]
+
+
+def test_a_failed_rejudge_call_keeps_the_fail(make_run, clock):
+    from uiai.ai import AIError
+
+    res, drv, ai, ev = make_run(BASIC, _x_never_passes, rejudge=lambda m: AIError("boom"))
+    x = res.steps[1]
+    assert x.status == "fail" and any("できなかった: boom" in nt for nt in x.notes)
+    assert res.status == "fail"
+
+
+def test_a_passing_then_is_not_rejudged(make_run, clock):
+    calls = []
+    res, *_ = make_run(BASIC, lambda m, n: reply(verify=[v("X is shown")] if '"X is' in m else [v("Y is shown")]),
+                       rejudge=lambda m: calls.append(m) or {"pass": True, "reason": ""})
+    assert res.status == "pass" and calls == []

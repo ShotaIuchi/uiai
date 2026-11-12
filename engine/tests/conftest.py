@@ -77,7 +77,7 @@ class FakeAI:
         self.msgs.append(text)
         r = self.script(text, len(self.msgs))
         return (r if isinstance(r, str) else json.dumps(r, ensure_ascii=False)), {
-            "wall_s": 0.1, "api_s": 0.1, "in_tokens": 10, "out_tokens": 5}
+            "wall_s": 0.1, "api_s": 0.1, "in_tokens": 1000 * len(self.msgs), "out_tokens": 5}  # grows per call
 
     def close(self):
         self.closed = True
@@ -101,7 +101,11 @@ def clock(monkeypatch):
 
 @pytest.fixture
 def make_run(tmp_path, clock):
-    def _make(yaml_text: str, script, driver=None, values=None):
+    def _make(yaml_text: str, script, driver=None, values=None, fresh_ai=False, rejudge=None):
+        """fresh_ai: each conversation gets its own FakeAI (returned as a list); `script(msg, n)` then
+        sees n counted per conversation. Otherwise one FakeAI serves every conversation.
+        rejudge: `rejudge(msg)` -> reply (dict, str, or an exception to raise) of the re-judge model; the
+        FakeAIs it answered through are in `runner.rejudges`."""
         p = tmp_path / "s.yaml"
         p.write_text(yaml_text, encoding="utf-8")
         sc = load(p)
@@ -111,9 +115,31 @@ def make_run(tmp_path, clock):
         out.mkdir(exist_ok=True)
         ev = EventLog(tmp_path / "events.jsonl", red)
         drv = driver or FakeDriver()
-        ai = FakeAI(script)
-        runner = ScenarioRunner(sc, "web", "http://x", drv, lambda system: ai, vals, out, ev, red, "haiku",
-                                printer=lambda s: None)
+        if fresh_ai:
+            ai = []
+
+            def factory(system):
+                ai.append(FakeAI(script))
+                return ai[-1]
+        else:
+            ai = FakeAI(script)
+
+            def factory(system):
+                return ai
+        rejudges: list[FakeAI] = []
+
+        def rejudge_factory(system):
+            def answer(msg, n):
+                r = rejudge(msg)
+                if isinstance(r, Exception):
+                    raise r
+                return r
+            rejudges.append(FakeAI(answer))
+            return rejudges[-1]
+        runner = ScenarioRunner(sc, "web", "http://x", drv, factory, vals, out, ev, red, "haiku",
+                                printer=lambda s: None, rejudge_factory=rejudge_factory if rejudge else None,
+                                rejudge_model="sonnet")
+        runner.rejudges = rejudges
         res = runner.run()
         ev.close()
         events = [json.loads(ln) for ln in (tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()]

@@ -9,13 +9,15 @@ for `then.observe` seconds. A `do` that cannot be done stops the scenario (defau
 from __future__ import annotations
 
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
 from .ai import AIError
-from .ai.protocol import Ask, build_message, parse_reply, system_prompt
+from .ai.protocol import (Ask, build_judge_message, build_message, judge_system_prompt, parse_judge, parse_reply,
+                          system_prompt)
 from .drivers.base import STALE, Driver, DriverError
 from .events import EventLog
 from .redact import Redactor
@@ -32,6 +34,17 @@ BACK_WORDS = re.compile(r"戻|back", re.I)
 # With continuously animated screens this would never end, so after this many skips per `do` it acts anyway.
 MAX_STALE_SKIPS = 2
 STALE_LABEL = "未実行（AI の判断後に画面が変わったため撮り直す）"
+# Conversations (design doc 10): every screenshot stays in the claude -p conversation (~1.6k tokens each on
+# Web). Measured in phase 4, the input size barely changes the response time (0.44 ms per 1k tokens; the
+# output length dominates), but it costs tokens and would hit the context window (200k) after ~120 calls.
+# Starting a new conversation has a cost too: its first replies came with 2-3x more (thinking) output, and
+# the AI misread a carried-over `then` as the result of the new `do`. So a new conversation is started only
+# when the current one is large: at the next section boundary, or before any `do` when it is very large.
+# Pending `then`s are judged in the old conversation first; earlier steps are carried over as text.
+# Never mid-`do`: the message already has what a `do` in progress needs (attempt, feedback).
+ROTATE_AT_SECTION = 50_000   # input tokens of the last call
+ROTATE_ANYWHERE = 100_000
+HISTORY_STEPS = 12           # earlier steps carried over to a new conversation
 
 STATUS_LABEL = {"pass": "合格", "pass_warn": "警告付き合格", "fail": "不合格", "error": "実行エラー",
                 "skipped": "未実行（スキップ）", "not_run": "未実行"}
@@ -99,9 +112,11 @@ class ScenarioRunner:
     def __init__(self, sc: Scenario, platform: str, target: str, driver: Driver,
                  ai_factory: Callable[[str], object], values: dict[str, str], out_dir: Path,
                  events: EventLog, redactor: Redactor, model: str,
-                 printer: Callable[[str], None] = lambda s: print(s, flush=True)):
+                 printer: Callable[[str], None] = lambda s: print(s, flush=True), *,
+                 rejudge_factory: Callable[[str], object] | None = None, rejudge_model: str = ""):
         self.sc, self.platform, self.app, self.drv = sc, platform, target, driver
         self.ai_factory, self.values, self.out = ai_factory, values, out_dir
+        self.rejudge_factory, self.rejudge_model = rejudge_factory, rejudge_model
         self.events, self.redact, self.print = events, redactor, printer
         self.cfg = sc.config
         self.secrets = sc.secret_names
@@ -114,6 +129,13 @@ class ScenarioRunner:
         self.items = sc.items
         self.t0 = 0.0
         self.section_first_do = True
+        self.system = ""
+        self.session_no = 0          # conversations started so far
+        self.session_calls = 0       # calls in the current conversation
+        self.session_tokens = 0      # input tokens of its last call
+        self.session_section = -1    # section of the last `do` run in it
+        self.carry_history = False   # prepend earlier steps to the next message
+        self.closing: list[threading.Thread] = []
 
     # ------------------------------------------------------------------ helpers
     def text(self, it: Item) -> str:
@@ -134,6 +156,42 @@ class ScenarioRunner:
         self.ev("warning", section=step.section, step=step.index + 1, kind=step.kind, text=step.text, message=msg)
         self.print(f"    ! 警告: {msg}")
 
+    # ------------------------------------------------------------------ AI sessions
+    def open_session(self) -> None:
+        """Start a fresh conversation. The old one is closed in the background (~0.6 s); the new one starts
+        up (~0.4 s) while the next screen settles, since this runs before the next observe."""
+        old = self.ai
+        self.ai = self.ai_factory(self.system)
+        self.session_no += 1
+        self.session_calls = self.session_tokens = 0
+        self.carry_history = self.session_no > 1
+        if old is not None:
+            th = threading.Thread(target=old.close, daemon=True)
+            th.start()
+            self.closing.append(th)
+
+    def before_do(self, section_index: int, pending: list[ThenState]) -> None:
+        """Start a new conversation if the current one is large (see ROTATE_*)."""
+        new_section = section_index != self.session_section
+        if self.session_calls and (self.session_tokens >= ROTATE_ANYWHERE
+                                   or (new_section and self.session_tokens >= ROTATE_AT_SECTION)):
+            if any(t.final is None for t in pending):
+                self.judge_only(pending)  # in the old conversation, on the screen the previous `do` left
+                if self.res.stop_all:
+                    raise StopAll()
+            self.open_session()
+        self.session_section = section_index
+
+    def history_text(self) -> str:
+        done = [s for s in self.res.steps if s.status in ("pass", "fail")][-HISTORY_STEPS:]
+        if not done:
+            return ""
+        label = {"pass": "done", "fail": "FAILED"}
+        lines = [f"- [{s.section}] {s.kind}: {s.text} -> {label[s.status] if s.kind == 'do' else s.status}"
+                 for s in done]
+        return ("Earlier steps of this scenario (from a previous conversation; their screenshots are not "
+                "repeated):\n" + "\n".join(lines) + "\n\n")
+
     # ------------------------------------------------------------------ AI call
     def observe(self):
         """Settled screen. An all-black screen (FLAG_SECURE?) is waited out up to then_timeout,
@@ -152,7 +210,12 @@ class ScenarioRunner:
     def ask(self, a: Ask, obs, kind: str, step_index: int | None) -> tuple[dict, dict]:
         self.check_time()
         msg = build_message(a)
+        if self.carry_history:
+            msg = self.history_text() + msg
+            self.carry_history = False
+        self.session_calls += 1
         reply, meta = self.ai.ask(msg, obs.jpeg)
+        self.session_tokens = meta["in_tokens"]
         res = parse_reply(reply)
         if res is None:
             reply2, meta2 = self.ai.ask("Your previous reply was not a valid JSON object. "
@@ -173,7 +236,8 @@ class ScenarioRunner:
             "error_shown": res["error_shown"], "done": res["done"], "act_result": "",
             "image": img, "iw": obs.width, "ih": obs.height, "screen_changed": obs.changed,
             "obs_s": obs.seconds, "obs_polls": obs.polls, "llm_s": meta["wall_s"], "api_s": meta["api_s"],
-            "in_tokens": meta["in_tokens"], "out_tokens": meta["out_tokens"], "note": "",
+            "in_tokens": meta["in_tokens"], "out_tokens": meta["out_tokens"], "session": self.session_no,
+            "note": "",
         }
         self.res.calls.append(rec)
         if step_index is not None:
@@ -224,7 +288,7 @@ class ScenarioRunner:
                 else:
                     self.finalize(t, "pass")
             elif now - t.started >= t.item.timeout:
-                self.finalize(t, "fail")
+                self.finalize(t, "pass" if self.rejudge(t, rec) else "fail")
             else:
                 retrying = True
         if passed_absence and (finishing or retrying):
@@ -238,6 +302,46 @@ class ScenarioRunner:
                 if not changed:
                     self.finalize(t, "pass")
         return any(t.final is None for t in undecided)
+
+    def rejudge(self, t: ThenState, rec: dict) -> bool:
+        """Second opinion (another model, fresh conversation, same screenshot) on a `then` about to fail.
+        True if it passes; the disagreement stays as a warning, since the screen may be ambiguous."""
+        if self.rejudge_factory is None:
+            return False
+        step = self.steps[t.item.index]
+        label = f"再判定（{self.rejudge_model}）"
+        before = [x for x in self.items if x.kind == "do" and x.index < t.item.index]
+        msg = build_judge_message(t.text, t.item.strict, self.steps[before[-1].index].text if before else None)
+        try:
+            s = self.rejudge_factory(judge_system_prompt(self.drv.description, self.drv.iw, self.drv.ih))
+            try:
+                reply, meta = s.ask(msg, (self.out / rec["image"]).read_bytes())
+            finally:
+                th = threading.Thread(target=s.close, daemon=True)
+                th.start()
+                self.closing.append(th)
+        except AIError as e:
+            step.notes.append(f"{label}できなかった: {self.redact.text(str(e))}")
+            return False
+        r = parse_judge(reply)
+        rec.setdefault("rejudge", []).append({
+            "then": t.text, "model": self.rejudge_model, "pass": None if r is None else r["pass"],
+            "reason": reply[:200] if r is None else r["reason"], "read": None if r is None else r["read"],
+            "llm_s": meta["wall_s"], "in_tokens": meta["in_tokens"], "out_tokens": meta["out_tokens"]})
+        if r is None:
+            step.notes.append(f"{label}の応答を解釈できない")
+            return False
+        self.print(self.redact.text(f"    ↻ {label}: {'合格' if r['pass'] else '不合格'} — {r['reason']}"
+                                    f"（{meta['wall_s']}s）"))
+        if not r["pass"]:
+            step.reason = f"{step.reason}（{label}でも不合格: {r['reason']}）"
+            return False
+        first = step.reason
+        step.reason = r["reason"]
+        if t.item.strict:
+            step.read = r["read"]
+        self.warn(step, f"判定が分かれた: {self.res.model} は不合格（{first}）、{label}で合格")
+        return True
 
     def finalize(self, t: ThenState, status: str, reason: str | None = None) -> None:
         t.final = status
@@ -334,6 +438,14 @@ class ScenarioRunner:
             if undecided and self.judge(undecided, res, rec):
                 self.recheck_action(res, rec, step)
                 self.log_call(rec)
+                act = res["action"] or {}
+                if act.get("type") in EXECUTABLE:
+                    # Tell the AI whether its action ran: in phase 4 it took an unexecuted tap for one that
+                    # "did not work", tapped again, and finally failed the `do`.
+                    last = act
+                    feedback = (f"{act.get('type')} -> {rec['act_result']}" if rec["act_result"] else
+                                f"{act.get('type')} was NOT executed: actions for the `do` wait until the `then`s "
+                                "are decided (only purpose verify/interrupt actions run meanwhile)")
                 continue
             if self.res.stop_all:
                 self.log_call(rec)
@@ -403,8 +515,9 @@ class ScenarioRunner:
         pending: list[ThenState] = []
         try:
             self.drv.reset(self.app, self.cfg)
-            self.ai = self.ai_factory(system_prompt(self.drv.description, self.drv.iw, self.drv.ih,
-                                                    self.cfg.interrupts.allow, sorted(self.secrets)))
+            self.system = system_prompt(self.drv.description, self.drv.iw, self.drv.ih,
+                                        self.cfg.interrupts.allow, sorted(self.secrets))
+            self.open_session()
             sections = self.sc.sections
             stop = False
             for si, sec in enumerate(sections):
@@ -423,6 +536,7 @@ class ScenarioRunner:
                         pending.append(ThenState(it, self.steps[it.index].text))
                         continue
                     try:
+                        self.before_do(si, pending)
                         ok, reason = self.run_do(it, pending)
                     except StopScenario as e:
                         ok, reason, stop_now = False, str(e), True
@@ -465,6 +579,8 @@ class ScenarioRunner:
         finally:
             if self.ai is not None:
                 self.ai.close()
+            for th in self.closing:
+                th.join(timeout=15)
             self.res.seconds = round(self.elapsed(), 1)
         if self.res.status != "error":
             c = self.res.counts()

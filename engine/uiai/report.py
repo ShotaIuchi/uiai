@@ -27,13 +27,14 @@ def write_scenario(res: ScenarioResult, out: Path, redact: Redactor) -> None:
 
 def _meta_lines(res: ScenarioResult) -> list[str]:
     c = res.counts()
-    tokens = res.calls[-1]["in_tokens"] if res.calls else 0
+    tokens = max((x["in_tokens"] for x in res.calls), default=0)
+    sessions = len({x.get("session", 1) for x in res.calls})
     return [
         f"- 結果: {ICON[res.status]} {STATUS_LABEL[res.status]}" + (f" — {res.error}" if res.error else ""),
         f"- ステップ: 合格 {c['pass']}・不合格 {c['fail']}・未実行 {c['not_run']}・警告 {c['warnings']}",
         f"- シナリオ: `{res.file}`",
         f"- 対象: {res.platform}（{res.target}）",
-        f"- モデル: {res.model}・AI 呼び出し {len(res.calls)} 回・最後の入力 {tokens} トークン",
+        f"- モデル: {res.model}・AI 呼び出し {len(res.calls)} 回（会話 {sessions} 本）・1 回の入力は最大 {tokens} トークン",
         f"- 開始: {res.started_at}・所要 {res.seconds} 秒",
     ]
 
@@ -103,6 +104,11 @@ def _report_html(res: ScenarioResult) -> str:
             f"<li class={'pass' if v.get('pass') else 'fail'}>{'✅' if v.get('pass') else '❌'} {e(str(v.get('then', '')))}"
             f" — {e(str(v.get('reason', '')))}" + (f" <code>{e(str(v['read']))}</code>" if v.get("read") else "") + "</li>"
             for v in c["verify"])
+        verdicts += "".join(
+            f"<li class={'pass' if r.get('pass') else 'fail'}>↻ 再判定（{e(str(r.get('model')))}）"
+            f"{'✅' if r.get('pass') else '❌'} {e(str(r.get('then', '')))} — {e(str(r.get('reason', '')))}"
+            + (f" <code>{e(str(r['read']))}</code>" if r.get("read") else "") + f" · {r.get('llm_s')}s</li>"
+            for r in c.get("rejudge", []))
         op = e(a.get("type", "")) + (f" ({e(str(a.get('x')))},{e(str(a.get('y')))})" if "x" in a else "") + \
             (f" <code>{e(str(a.get('text', '')))}</code>" if a.get("type") == "input" else "") + \
             (f" <code>{e(str(a.get('key', '')))}</code>" if a.get("type") == "key" else "")
@@ -116,7 +122,8 @@ def _report_html(res: ScenarioResult) -> str:
             + (f'<div class=small>ダイアログ: {e(c["dialog"])}</div>' if c["dialog"] else "")
             + (f"<ul>{verdicts}</ul>" if verdicts else "")
             + (f'<div class=small>{e(c["note"])}</div>' if c["note"] else "")
-            + f'<div class=small>撮影 {c["obs_s"]}s · AI {c["llm_s"]}s · 入力 {c["in_tokens"]} トークン</div></div>')
+            + f'<div class=small>撮影 {c["obs_s"]}s · AI {c["llm_s"]}s · 入力 {c["in_tokens"]} トークン'
+              f' · 会話 {c.get("session", 1)}</div></div>')
     cw = "".join(f"<li>{e(w)}</li>" for w in res.check_warnings)
     return (f"<!doctype html><html lang=ja><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
             f"<title>{e(res.name)} @ {res.platform}</title><style>{CSS}</style></head><body><main>"

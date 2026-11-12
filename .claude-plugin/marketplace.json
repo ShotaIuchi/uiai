@@ -8,7 +8,7 @@
     {
       "name": "uiai",
       "source": "./",
-      "description": "AI駆動のクロスプラットフォームUIテスト自動化（Android / iOS / Web）"
+      "description": "自然言語シナリオの UI テスト（Android / Web、iOS は今後）。AI がスクリーンショットを見て操作・判定する"
     }
   ]
 }

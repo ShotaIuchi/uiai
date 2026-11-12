@@ -1,11 +1,20 @@
 {
   "name": "uiai",
-  "version": "0.1.0",
-  "description": "AI駆動のクロスプラットフォームUIテスト自動化（Android / iOS / Web）。自然言語シナリオの実行・検証と、画面録画からのシナリオ生成。",
+  "version": "0.2.0",
+  "description": "自然言語で書いたシナリオで UI テストを実行する（Android / Web、iOS は今後）。AI がスクリーンショットを見て 1 ステップずつ操作・判定し、失敗をその場で知らせる。画面録画からのシナリオ生成も。",
   "author": {
     "name": "Shota Iuchi"
   },
   "homepage": "https://github.com/ShotaIuchi/uiai",
   "repository": "https://github.com/ShotaIuchi/uiai",
-  "keywords": ["ui-test", "android", "ios", "web", "adb", "playwright", "scenario"]
+  "keywords": [
+    "ui-test",
+    "android",
+    "ios",
+    "web",
+    "adb",
+    "playwright",
+    "scenario",
+    "screenshot"
+  ]
 }

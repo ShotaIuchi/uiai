@@ -5,6 +5,7 @@
 | シナリオ | 対象 | 必要なもの |
 |---|---|---|
 | `web-demo.yaml` | 同梱の Web 試験アプリ（`web-demo/index.html`） | Chromium（`uiai setup`） |
+| `web-long.yaml` | 同梱の Web 試験アプリで 50 ステップ（長いシナリオの計測用） | Chromium |
 | `web-wikipedia.yaml` | ja.wikipedia.org | Chromium、ネットワーク |
 | `android-settings.yaml` | Android の設定アプリ | adb で接続した端末かエミュレータ |
 | `android-japanese-input.yaml` | Android の設定アプリの検索（日本語を入力して strict で確かめる） | 同上。端末のクリップボードを上書きする |

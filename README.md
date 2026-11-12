@@ -21,6 +21,7 @@ AI駆動のクロスプラットフォームUIテスト自動化ツール。自�
 
 | スキル名 | 説明 |
 |---------|------|
+| `uiai-record-to-scenario` | 端末を操作しながら録画し、その録画からシナリオYAMLを自動生成（Android） |
 | `uiai-video-to-scenario` | 画面録画動画からシナリオYAMLを自動生成 |
 | `uiai-scenario-check` | シナリオYAMLの検証・自動修正 |
 | `uiai-create` | 対話形式で新しいスキルを作成 |

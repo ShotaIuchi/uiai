@@ -432,7 +432,8 @@ variables:
 | `skills/scenario-check` | 継続。エンジンの `uiai check` を呼ぶ形にし、11 章の新ルールを反映（段階 2 で実施） |
 | `sample/`（実在しない `com.example.app` が対象） | 書式の例として残し、`uiai check` の対象にする。実際に走らせられるサンプル（Android 設定アプリ・Web 試験アプリ）を別に用意する |
 | `skills/video-to-scenario`（＋エージェント 3 つ）、`skills/record-to-scenario` | 継続（シナリオを作る側で、実行方式の影響を受けない） |
-| `skills/create` | 廃止候補（プラットフォームの追加はドライバの追加になるため） |
+| `skills/create` | 廃止（プラットフォームの追加はドライバの追加になるため。段階 4 のあとに削除） |
+| 旧ワークフロー管理の記録（`.wf/`・`docs/wf/`）、プラグイン化前のスキル説明（`docs/readme/`） | 削除（参照がなく、内容が旧方式のまま。段階 4 のあとに削除） |
 | `prototype/ai-loop/` | エンジンへ移植したあと削除（段階 1 で削除済み。シナリオは `examples/` へ移動） |
 | 既知の不具合: `skills/ios-test/references/scenario-schema.md` のリンク切れ、`skills/create/SKILL.md.new` の残骸 | 段階 2 で削除（どちらも消えた） |
 

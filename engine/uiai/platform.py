@@ -45,12 +45,15 @@ def android_serials() -> list[str]:
     return [ln.split("\t")[0] for ln in _run(["adb", "devices"]).splitlines()[1:] if ln.endswith("\tdevice")]
 
 
-def probe(serial: str | None = None) -> dict[str, bool]:
+def probe(serial: str | None = None, udid: str | None = None) -> dict[str, bool]:
     """What can run right now: connected Android device, booted iOS simulator, Web (always)."""
     serials = android_serials()
     ios = False
-    if sys.platform == "darwin" and shutil.which("xcrun"):
-        ios = "(Booted)" in _run(["xcrun", "simctl", "list", "devices", "booted"])
+    if sys.platform == "darwin":
+        from .drivers.ios import booted_simulators
+
+        booted = [d["udid"] for d in booted_simulators()]
+        ios = (udid in booted) if udid else bool(booted)
     return {"android": (serial in serials) if serial else bool(serials), "ios": ios, "web": True}
 
 
@@ -74,7 +77,7 @@ def resolve(app: Any, requested: str | None, available: dict[str, bool]) -> list
 
 def _hint(p: str) -> str:
     return {"android": "Android 端末・エミュレータを adb で接続する",
-            "ios": "iOS シミュレータを起動する（Mac のみ）",
+            "ios": "iOS シミュレータを起動する（Mac のみ。操作には AXe が要る）",
             "web": ""}[p]
 
 

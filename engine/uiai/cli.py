@@ -114,7 +114,7 @@ def cmd_run(a: argparse.Namespace) -> int:
                 continue
             redactor.add([values[n] for n in sc.secret_names if n in values])
             if available is None:
-                available = probe(a.serial)
+                available = probe(a.serial, a.udid)
             try:
                 platforms = resolve(sc.app, a.platform, available)
             except PlatformError as e:
@@ -128,7 +128,8 @@ def cmd_run(a: argparse.Namespace) -> int:
                     break
                 try:
                     if p not in drivers:
-                        drivers[p] = make_driver(p, serial=a.serial, browser_path=a.browser_path, headed=a.headed)
+                        drivers[p] = make_driver(p, serial=a.serial, udid=a.udid, browser_path=a.browser_path,
+                                                 headed=a.headed)
                 except DriverError as e:
                     skipped.append((f"{sc.name} @ {p}", str(e)))
                     events.emit("error", scenario=sc.name, platform=p, file=str(f), reason=str(e))
@@ -198,7 +199,7 @@ def _dry_run(files: list[Path], overrides: dict[str, str], a: argparse.Namespace
             continue
         _, missing = resolve_variables(sc, overrides, interactive=False)
         if available is None:
-            available = probe(a.serial)
+            available = probe(a.serial, a.udid)
         try:
             platforms = resolve(sc.app, a.platform, available)
         except PlatformError as e:
@@ -265,7 +266,9 @@ def cmd_setup(a: argparse.Namespace) -> int:
     adb = shutil.which("adb")
     _out(f"OK   adb: {adb}" if adb else "--   adb なし（Android を使う場合は Android SDK Platform-Tools を入れる）")
     if sys.platform == "darwin":
-        _out("OK   xcrun（iOS は段階 3 で対応予定）" if shutil.which("xcrun") else "--   xcrun なし（iOS は Xcode が必要）")
+        _out("OK   xcrun" if shutil.which("xcrun") else "--   xcrun なし（iOS を使う場合は Xcode を入れる）")
+        _out(f"OK   axe: {shutil.which('axe')}" if shutil.which("axe")
+             else "--   axe なし（iOS を使う場合は brew install cameroncooke/axe/axe）")
     if not a.skip_browser:
         _out("...  Playwright のブラウザ（Chromium）を取得する")
         cmd = [sys.executable, "-m", "playwright", "install"] + (["--with-deps"] if a.with_deps else []) + ["chromium"]
@@ -353,6 +356,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--platform", choices=["android", "ios", "web", "all"])
     r.add_argument("--model", help=f"使うモデル（既定: config.model、なければ {DEFAULT_MODEL}）")
     r.add_argument("--serial", help="Android 端末のシリアル（adb -s）")
+    r.add_argument("--udid", help="iOS シミュレータの UDID（起動中が複数あるとき）")
     r.add_argument("--browser-path", help="Chromium の実行ファイル（既定: Playwright のもの）")
     r.add_argument("--headed", action="store_true", help="ブラウザを表示して実行する")
     r.add_argument("--results-dir", default=str(DEFAULT_RESULTS))

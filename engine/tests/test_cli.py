@@ -22,7 +22,7 @@ steps:
 
 @pytest.fixture
 def scenario(tmp_path, monkeypatch):
-    monkeypatch.setattr(platform, "probe", lambda serial=None: {"android": False, "ios": False, "web": True})
+    monkeypatch.setattr(platform, "probe", lambda serial=None, udid=None: {"android": False, "ios": False, "web": True})
     monkeypatch.delenv("UIAI_TEST_PW", raising=False)
     p = tmp_path / "login.yaml"
     p.write_text(SCENARIO, encoding="utf-8")

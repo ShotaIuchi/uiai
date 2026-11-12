@@ -20,6 +20,8 @@ from . import AIError
 
 
 class ClaudeCodeSession:
+    backend = "claude-code"
+
     def __init__(self, model: str, system: str, timeout: float = 120.0):
         exe = shutil.which("claude")  # resolves claude.exe / claude.cmd on Windows via PATHEXT
         if not exe:

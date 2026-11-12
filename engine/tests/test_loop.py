@@ -541,6 +541,7 @@ def test_a_then_about_to_fail_passes_on_rejudge_with_a_warning(make_run, clock):
     assert not [e for e in ev if e["type"] == "fail"]
     rj = [c for c in res.calls if c.get("rejudge")]
     assert len(rj) == 1 and rj[0]["rejudge"][0]["model"] == "sonnet" and rj[0]["rejudge"][0]["pass"] is True
+    assert rj[0]["rejudge"][0]["model_id"] == ""  # the fake does not know one; ApiSession's is recorded
 
 
 def test_a_then_failing_on_rejudge_too_fails_with_both_reasons(make_run, clock):
@@ -564,3 +565,67 @@ def test_a_passing_then_is_not_rejudged(make_run, clock):
     res, *_ = make_run(BASIC, lambda m, n: reply(verify=[v("X is shown")] if '"X is' in m else [v("Y is shown")]),
                        rejudge=lambda m: calls.append(m) or {"pass": True, "reason": ""})
     assert res.status == "pass" and calls == []
+
+
+# ---------------------------------------------------------------------------- unexpected failures
+
+
+def test_an_unexpected_exception_ends_the_scenario_as_a_recorded_error(make_run, capsys):
+    def script(msg, n):
+        if n == 1:
+            return reply({"type": "launch"})
+        raise ValueError("bad thing")
+
+    res, drv, ai, ev = make_run(BASIC, script)
+    assert res.status == "error" and res.error == "想定外のエラー（ValueError）: bad thing"
+    assert [e["reason"] for e in ev if e["type"] == "error"] == [res.error]
+    assert ai.closed
+    err = capsys.readouterr().err
+    assert "Traceback" in err and "ValueError: bad thing" in err  # where it happened, for diagnosis
+
+
+def test_running_out_of_time_at_a_section_boundary_fails_the_pending_then(make_run, clock):
+    y = """
+name: t
+app: "http://x"
+config: {on_failure: next_section, timeout: 3}
+steps:
+  - id: A
+    actions:
+      - do: "open the app"
+      - then: "X is shown"
+  - id: B
+    actions:
+      - do: "tap B"
+"""
+
+    def script(msg, n):
+        clock.now += 1
+        if n == 1:
+            return reply({"type": "launch"})
+        return reply({"type": "none"}, verify=[v("X is shown", False)])
+
+    res, drv, ai, ev = make_run(y, script)
+    assert [s.status for s in res.steps] == ["pass", "fail", "not_run"]
+    assert "config.timeout" in res.steps[1].reason and res.status == "fail"
+    (fail,) = [e for e in ev if e["type"] == "fail"]
+    assert fail["kind"] == "then" and fail["not_run"] == 1  # reported like a failed `do` stopping the rest
+
+
+def test_a_session_that_fails_to_close_does_not_lose_the_result(make_run, capsys):
+    from conftest import FakeAI
+
+    class BadClose(FakeAI):
+        def close(self):
+            raise RuntimeError("close failed")
+
+    def script(msg, n):
+        if n == 1:
+            return reply({"type": "launch"})
+        if n == 2:
+            return reply(verify=[v("X is shown")])
+        return reply({"type": "none"}, verify=[v("Y is shown")])
+
+    res, *_ = make_run(BASIC, None, factory=lambda system: BadClose(script))
+    assert res.status == "pass"
+    assert "RuntimeError: close failed" in capsys.readouterr().err

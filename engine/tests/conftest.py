@@ -92,6 +92,17 @@ def v(text, ok=True, **kw):
     return {"then": text, "pass": ok, "reason": "r", **kw}
 
 
+@pytest.fixture(autouse=True)
+def _no_outside_settings(monkeypatch):
+    """The developer's shell must not change what the tests do (UIAI_BACKEND=api with a real key would
+    send billed requests; ANTHROPIC_BASE_URL would change the URL; a proxy would take the requests to the
+    local test servers). Tests that need one set it."""
+    proxies = [p for n in ("http", "https", "all", "no") for p in (f"{n}_proxy", f"{n.upper()}_PROXY")]
+    for name in ("UIAI_BACKEND", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "UIAI_WEBHOOK_URL", "UIAI_NOTIFY",
+                 *proxies):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def clock(monkeypatch):
     c = FakeClock()

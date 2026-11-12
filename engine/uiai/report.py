@@ -20,9 +20,17 @@ def _md(s: object) -> str:
 def write_scenario(res: ScenarioResult, out: Path, redact: Redactor) -> None:
     data = redact(asdict(res))
     data["counts"] = res.counts()
-    (out / "result.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    (out / "report.md").write_text(redact.text(_report_md(res)), encoding="utf-8")
-    (out / "report.html").write_text(redact.text(_report_html(res)), encoding="utf-8")
+    # errors="replace": text from the AI can hold a lone surrogate, which UTF-8 cannot encode
+    (out / "result.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8",
+                                     errors="replace")
+    (out / "report.md").write_text(redact.text(_report_md(res)), encoding="utf-8", errors="replace")
+    (out / "report.html").write_text(redact.text(_report_html(res)), encoding="utf-8", errors="replace")
+
+
+def _backend_note(res: ScenarioResult) -> str:
+    notes = (["Anthropic API"] if res.backend == "api" else []) + ([res.model_id] if res.model_id != res.model
+                                                                    and res.model_id else [])
+    return f"（{'・'.join(notes)}）" if notes else ""
 
 
 def _meta_lines(res: ScenarioResult) -> list[str]:
@@ -34,7 +42,7 @@ def _meta_lines(res: ScenarioResult) -> list[str]:
         f"- ステップ: 合格 {c['pass']}・不合格 {c['fail']}・未実行 {c['not_run']}・警告 {c['warnings']}",
         f"- シナリオ: `{res.file}`",
         f"- 対象: {res.platform}（{res.target}）",
-        f"- モデル: {res.model}{'（Anthropic API）' if res.backend == 'api' else ''}"
+        f"- モデル: {res.model}{_backend_note(res)}"
         f"・AI 呼び出し {len(res.calls)} 回（会話 {sessions} 本）・1 回の入力は最大 {tokens} トークン",
         f"- 開始: {res.started_at}・所要 {res.seconds} 秒",
     ]
@@ -137,14 +145,19 @@ def _report_html(res: ScenarioResult) -> str:
 
 
 def write_summary(results: list[tuple[ScenarioResult, Path]], run_dir: Path, exit_code: int,
-                  skipped: list[tuple[str, str]], redact: Redactor) -> Path:
+                  skipped: list[tuple[str, str]], redact: Redactor,
+                  report_errors: list[tuple[str, str, Path]] = ()) -> Path:
+    """report_errors: (scenario, reason, its output folder) for each report that could not be written."""
     lines = ["# uiai 実行結果", "", f"- 終了コード: {exit_code}", "",
              "| シナリオ | 対象 | 結果 | 合格 | 不合格 | 未実行 | 警告 | 秒 | レポート |", "|---|---|---|---|---|---|---|---|---|"]
+    unwritten = {out for _, _, out in report_errors}
     for res, out in results:
         c = res.counts()
         rel = out.relative_to(run_dir).as_posix()
+        link = ("書けなかった" if out in unwritten
+                else f"[{rel}/report.md]({rel}/report.md)")
         lines.append(f"| {_md(res.name)} | {res.platform} | {ICON[res.status]} {STATUS_LABEL[res.status]} | {c['pass']} "
-                     f"| {c['fail']} | {c['not_run']} | {c['warnings']} | {res.seconds} | [{rel}/report.md]({rel}/report.md) |")
+                     f"| {c['fail']} | {c['not_run']} | {c['warnings']} | {res.seconds} | {link} |")
     for name, reason in skipped:
         lines.append(f"| {_md(name)} | — | {ICON['skipped']} 未実行 | | | | | | {_md(reason)} |")
     fails = [(r, s) for r, _ in results for s in r.steps if s.status == "fail"]
@@ -155,9 +168,11 @@ def write_summary(results: list[tuple[ScenarioResult, Path]], run_dir: Path, exi
     errs = [r for r, _ in results if r.status == "error"]
     if errs:
         lines += ["", "## 実行エラー", ""] + [f"- {r.name} @ {r.platform}: {r.error}" for r in errs]
+    if report_errors:
+        lines += ["", "## レポートを書けなかった", ""] + [f"- {name}: {reason}" for name, reason, _ in report_errors]
     warns = [(r, s, w) for r, _ in results for s in r.steps for w in s.warnings]
     if warns:
         lines += ["", "## 警告", ""] + [f"- {r.name} @ {r.platform} / {s.section} / 「{s.text}」: {w}" for r, s, w in warns]
     p = run_dir / "summary.md"
-    p.write_text(redact.text("\n".join(lines) + "\n"), encoding="utf-8")
+    p.write_text(redact.text("\n".join(lines) + "\n"), encoding="utf-8", errors="replace")
     return p

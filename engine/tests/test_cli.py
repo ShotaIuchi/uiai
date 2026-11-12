@@ -91,6 +91,8 @@ from conftest import FakeDriver  # noqa: E402
 class FakeSession:
     """Stands in for ClaudeCodeSession: passes every `then`, does one tap per `do`."""
 
+    backend = "claude-code"
+
     def __init__(self, model, system):
         pass
 
@@ -203,13 +205,81 @@ def test_no_more_devices_are_started_than_there_are_scenarios(parallel_env, tmp_
 # ---------------------------------------------------------------------------- AI backend
 
 
-def test_backend_api_needs_a_key(parallel_env, tmp_path, capsys, monkeypatch):
+@pytest.mark.parametrize("key,says", [(None, "ANTHROPIC_API_KEY がない"), ("\n", "ANTHROPIC_API_KEY がない"),
+                                      ("sk-ä", "使えない文字")])
+def test_backend_api_needs_a_usable_key_before_anything_starts(parallel_env, tmp_path, capsys, monkeypatch, key,
+                                                                says):
     files, *_ = parallel_env
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    for extra in ([], ["--dry-run"]):
-        code = cli.main(["run", files[0], "--backend", "api", "--results-dir", str(tmp_path / "r"), *extra])
-        assert code == 2 and "ANTHROPIC_API_KEY" in capsys.readouterr().out
+    if key is not None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", key)
+    code = cli.main(["run", files[0], "--backend", "api", "--results-dir", str(tmp_path / "r")])
+    out = capsys.readouterr().out
+    assert code == 2 and says in out and "sk-ä" not in out
     assert not (tmp_path / "r").exists()
+
+
+def test_dry_run_reports_the_scenarios_and_a_missing_key(parallel_env, tmp_path, capsys):
+    files, *_ = parallel_env
+    code = cli.main(["run", files[0], "--backend", "api", "--dry-run"])
+    out = capsys.readouterr().out
+    assert code == 2 and "で実行できる" in out and "✗ --backend api: 環境変数 ANTHROPIC_API_KEY がない" in out
+
+
+def test_the_backend_is_recorded_even_if_its_session_cannot_start(parallel_env, tmp_path, capsys, monkeypatch):
+    import uiai.ai.api as api
+    from uiai.ai import AIError
+
+    files, *_ = parallel_env
+
+    def refuse(model, system):
+        raise AIError("no session")
+
+    monkeypatch.setattr(api, "ApiSession", refuse)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    code = cli.main(["run", files[0], "--backend", "api", "--results-dir", str(tmp_path / "r"), "--run-id", "p"])
+    assert code == 2
+    (result,) = (tmp_path / "r" / "p").glob("*/result.json")
+    r = json.loads(result.read_text(encoding="utf-8"))
+    assert r["backend"] == "api" and r["status"] == "error"
+
+
+def test_an_alias_and_its_full_model_id_are_the_same_model_only_where_the_aliases_are_known():
+    assert cli._same_model("sonnet", "claude-sonnet-5-5", "api") and cli._same_model("haiku", "haiku", "api")
+    assert not cli._same_model("haiku", "sonnet", "api")
+    # Claude Code resolves its own aliases (and moves them to newer models): only equal names are known equal
+    assert not cli._same_model("sonnet", "claude-sonnet-5-5", "claude-code")
+    assert cli._same_model("sonnet", "sonnet", "claude-code")
+
+
+def test_a_bad_base_url_stops_the_run_before_anything_starts(parallel_env, tmp_path, capsys, monkeypatch):
+    files, *_ = parallel_env
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "api.anthropic.com")
+    code = cli.main(["run", files[0], "--backend", "api", "--results-dir", str(tmp_path / "r")])
+    assert code == 2 and "ANTHROPIC_BASE_URL" in capsys.readouterr().out
+    assert not (tmp_path / "r").exists()
+
+
+def test_a_report_that_cannot_be_written_keeps_the_result_but_fails_the_run(parallel_env, tmp_path, capsys,
+                                                                             monkeypatch):
+    from uiai import report
+
+    files, *_ = parallel_env
+
+    def disk_full(res, out, redactor):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(report, "write_scenario", disk_full)
+    code = cli.main(["run", files[0], "--results-dir", str(tmp_path / "r"), "--run-id", "p", "--rejudge-model", "none"])
+    captured = capsys.readouterr()
+    out = captured.out
+    assert code == 2 and "レポートを書けない（OSError）: disk full" in out
+    assert "記録失敗" in out.split("まとめ:")[0].rsplit("\n\n", 1)[-1]  # in the closing listing too
+    summary = (tmp_path / "r" / "p" / "summary.md").read_text(encoding="utf-8")
+    assert "| ✅ 合格 |" in summary  # the result is kept
+    assert "## レポートを書けなかった" in summary and "disk full" in summary and "| 書けなかった |" in summary
+    assert "（レポートを書けなかった）" in out
+    assert "OSError: disk full" in captured.err  # the traceback, for diagnosis
 
 
 def test_an_unknown_backend_from_the_environment_is_refused(parallel_env, tmp_path, capsys, monkeypatch):
@@ -228,6 +298,8 @@ def test_backend_api_runs_on_api_sessions(parallel_env, tmp_path, capsys, monkey
     made = []
 
     class FakeApi(FakeSession):
+        backend = "api"
+
         def __init__(self, model, system):
             made.append(model)
 
@@ -251,9 +323,107 @@ def test_backend_api_runs_on_api_sessions(parallel_env, tmp_path, capsys, monkey
 
 def test_default_backend_is_claude_code(parallel_env, tmp_path, capsys, monkeypatch):
     files, *_ = parallel_env
-    monkeypatch.delenv("UIAI_BACKEND", raising=False)
     code = cli.main(["run", files[0], "--results-dir", str(tmp_path / "r"), "--run-id", "p"])
     assert code == 0
     (result,) = (tmp_path / "r" / "p").glob("*/result.json")
     assert json.loads(result.read_text(encoding="utf-8"))["backend"] == "claude-code"
     assert "Anthropic API" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("parallel", [False, True])
+def test_a_scenario_that_crashes_still_counts_as_not_run(parallel_env, tmp_path, capsys, monkeypatch, parallel):
+    """Anything the runner lets escape must not leave the run looking like a pass (exit code 0)."""
+    from uiai import loop
+
+    files, *_ = parallel_env
+
+    def crash(self):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(loop.ScenarioRunner, "run", crash)
+    code = cli.main(["run", *files[:2], *(["--parallel"] if parallel else []), "--results-dir", str(tmp_path / "r"),
+                     "--run-id", "p", "--rejudge-model", "none"])
+    captured = capsys.readouterr()
+    out = captured.out
+    assert code == 2, out
+    assert out.count("想定外のエラー（RuntimeError）: boom") == 4  # when skipped + final list, for both
+    assert captured.err.count("RuntimeError: boom") == 2  # each traceback, for diagnosis
+    if parallel:  # printed like the job's other lines: with its device, not into another device's line
+        assert out.count("] ✗ S") == 2
+
+
+def _setup(monkeypatch, capsys, args, claude):
+    import shutil
+
+    monkeypatch.setattr(shutil, "which", lambda name: "/bin/claude" if claude and name == "claude" else None)
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **kw: type("R", (), {"stdout": "2.0", "returncode": 0}))
+    code = cli.main(["setup", "--skip-browser", *args])
+    return code, capsys.readouterr().out
+
+
+def test_setup_needs_claude_for_the_default_backend(monkeypatch, capsys):
+    code, out = _setup(monkeypatch, capsys, [], claude=False)
+    assert code == 2 and "NG   claude" in out and "--backend api" in out
+
+
+@pytest.mark.parametrize("backend,code,line", [("api", 2, "NG   ANTHROPIC_API_KEY に使えない文字"),
+                                               ("claude-code", 0, "--   ANTHROPIC_API_KEY に使えない文字")])
+def test_setup_checks_the_key_like_run_does(monkeypatch, capsys, backend, code, line):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ä")
+    got, out = _setup(monkeypatch, capsys, ["--backend", backend], claude=True)
+    assert got == code and line in out and "sk-ä" not in out
+
+
+@pytest.mark.parametrize("args,env", [(["--backend", "api"], {}), ([], {"UIAI_BACKEND": "api"})])
+def test_setup_does_not_need_claude_for_the_api_backend(monkeypatch, capsys, args, env):
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    code, out = _setup(monkeypatch, capsys, args, claude=False)
+    assert code == 0, out
+    assert "NG" not in out and "--backend api では使わない" in out and "uiai run のときに要る" in out
+
+
+def test_a_summary_that_cannot_be_written_still_ends_the_run_with_code_2(parallel_env, tmp_path, capsys,
+                                                                         monkeypatch):
+    from uiai import report
+
+    files, *_ = parallel_env
+
+    def disk_full(*a, **kw):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(report, "write_summary", disk_full)
+    code = cli.main(["run", files[0], "--results-dir", str(tmp_path / "r"), "--run-id", "p", "--rejudge-model", "none"])
+    out = capsys.readouterr().out
+    assert code == 2 and "まとめ（summary.md）を書けない（OSError）" in out and "（終了コード 2）" in out
+    events = [json.loads(ln) for ln in (tmp_path / "r" / "p" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert any(e["type"] == "error" and "summary.md" in e["reason"] for e in events)  # why the run is a 2
+
+
+def test_setup_shows_every_problem_with_the_api_settings(monkeypatch, capsys):
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "proxy.local")
+    code, out = _setup(monkeypatch, capsys, ["--backend", "api"], claude=True)
+    assert code == 2
+    assert "--   ANTHROPIC_API_KEY なし（uiai run のときに要る）" in out and "NG   ANTHROPIC_BASE_URL" in out
+
+
+def test_only_the_report_that_failed_is_marked_when_names_repeat(parallel_env, tmp_path, capsys, monkeypatch):
+    from uiai import report
+
+    files, *_ = parallel_env
+    real, calls = report.write_scenario, []
+
+    def first_fails(res, out, redactor):
+        calls.append(out)
+        if len(calls) == 1:
+            raise OSError("disk full")
+        real(res, out, redactor)
+
+    monkeypatch.setattr(report, "write_scenario", first_fails)
+    code = cli.main(["run", files[0], files[0], "--results-dir", str(tmp_path / "r"), "--run-id", "p",
+                     "--rejudge-model", "none"])
+    out = capsys.readouterr().out
+    assert code == 2
+    summary = (tmp_path / "r" / "p" / "summary.md").read_text(encoding="utf-8")
+    assert summary.count("| 書けなかった |") == 1 and summary.count("/report.md)") == 1
+    assert out.count("（レポートを書けなかった）") == 1

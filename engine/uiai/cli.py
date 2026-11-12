@@ -20,11 +20,11 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from . import __version__
 from .events import EventLog, describe
-from .redact import Redactor
+from .redact import Redactor, traceback_to_stderr
 
 DEFAULT_MODEL = "haiku"
 DEFAULT_REJUDGE_MODEL = "sonnet"
@@ -87,8 +87,29 @@ def _devices(a: argparse.Namespace, jobs_per_platform: dict[str, int]) -> dict[s
     return out
 
 
+def _backend(a: argparse.Namespace) -> str | None:
+    """--backend, else UIAI_BACKEND, else claude-code. None (after saying why) if it is not a backend."""
+    backend = a.backend or os.environ.get("UIAI_BACKEND") or "claude-code"
+    if backend not in BACKENDS:
+        _out(f"--backend（UIAI_BACKEND）は {' か '.join(BACKENDS)}: {backend}")
+        return None
+    return backend
+
+
+def _same_model(a: str, b: str, backend: str) -> bool:
+    """Whether two model names are the same model. With the API backend an alias and the full model ID it
+    stands for are (its alias table is fixed); Claude Code resolves its aliases itself, and they move to
+    newer models on their own, so there only the same name is known to be the same model."""
+    from .ai.api import resolve_model
+
+    if backend == "api":
+        return resolve_model(a) == resolve_model(b)
+    return a == b
+
+
 def cmd_run(a: argparse.Namespace) -> int:
-    from .ai.api import ApiSession
+    from .ai import AIError
+    from .ai.api import ApiSession, check_config
     from .ai.claude_code import ClaudeCodeSession
     from .drivers import DriverError, make_driver
     from .loop import STATUS_LABEL, ScenarioRunner
@@ -111,15 +132,23 @@ def cmd_run(a: argparse.Namespace) -> int:
     if not a.parallel and (len(a.serial or []) > 1 or len(a.udid or []) > 1):
         _out("複数の端末・シミュレータを使うには --parallel を付ける")
         return 2
-    backend = a.backend or os.environ.get("UIAI_BACKEND") or "claude-code"
-    if backend not in BACKENDS:
-        _out(f"--backend（UIAI_BACKEND）は {' か '.join(BACKENDS)}: {backend}")
+    backend = _backend(a)
+    if backend is None:
         return 2
-    if backend == "api" and not os.environ.get("ANTHROPIC_API_KEY"):
-        _out("--backend api には環境変数 ANTHROPIC_API_KEY が要る")
-        return 2
+    key_problem = ""
+    if backend == "api":
+        try:
+            check_config()  # the same checks ApiSession makes, so a bad setting stops the run here, once
+        except AIError as e:
+            key_problem = f"--backend api: {e}"
     if a.dry_run:
-        return _dry_run(files, overrides, a)
+        code = _dry_run(files, overrides, a)
+        if key_problem:
+            _out(f"✗ {key_problem}")
+        return 2 if key_problem else code
+    if key_problem:
+        _out(key_problem)
+        return 2
 
     results_dir = Path(a.results_dir)
     run_id = a.run_id or time.strftime("%Y%m%d-%H%M%S")
@@ -192,6 +221,8 @@ def cmd_run(a: argparse.Namespace) -> int:
     # 2. Run them: in order (default) or, with --parallel, on every device at once.
     devices = _devices(a, {p: sum(1 for j in jobs if j.platform == p) for p in {j.platform for j in jobs}})
     results: list[tuple[int, Any, Path]] = []
+    # (scenario, reason, output folder) for each report not written; the run then is not complete
+    report_errors: list[tuple[str, str, Path]] = []
     lock = threading.Lock()
     stop_all = threading.Event()
     printer_lock = threading.Lock()
@@ -203,23 +234,36 @@ def cmd_run(a: argparse.Namespace) -> int:
 
     def run_job(job: Job, dev: Device) -> None:
         rj = a.rejudge_model
-        rejudge = None if rj in ("", "none") or rj == job.model else (
+        rejudge = None if rj in ("", "none") or _same_model(rj, job.model, backend) else (
             lambda system, m=rj: session(m, system))
 
         def printer(s: str) -> None:
             with printer_lock:
                 print(f"[{dev.label}] {s}" if a.parallel else s, flush=True)
 
-        runner = ScenarioRunner(job.sc, job.platform, target(job.sc.app, job.platform, job.file.parent), dev.driver,
-                                lambda system, m=job.model: session(m, system), job.values, job.out,
-                                events, redactor, job.model, printer, rejudge_factory=rejudge, rejudge_model=rj,
-                                backend=backend)
-        res = runner.run()
-        write_scenario(res, job.out, redactor)
+        try:
+            runner = ScenarioRunner(job.sc, job.platform, target(job.sc.app, job.platform, job.file.parent),
+                                    dev.driver, lambda system, m=job.model: session(m, system), job.values, job.out,
+                                    events, redactor, job.model, printer, rejudge_factory=rejudge, rejudge_model=rj,
+                                    backend=backend)
+            res = runner.run()
+        except Exception as e:  # noqa: BLE001 — never lose a scenario: it must count in the exit code
+            traceback_to_stderr(redactor)
+            skip(job, redactor.text(f"想定外のエラー（{type(e).__name__}）: {e}"), say=printer)
+            return
         with lock:
             results.append((job.no, res, job.out))
         if res.stop_all:
             stop_all.set()
+        try:
+            write_scenario(res, job.out, redactor)
+        except Exception as e:  # noqa: BLE001 — the result stands; the run still cannot count as complete
+            traceback_to_stderr(redactor)
+            reason = redactor.text(f"レポートを書けない（{type(e).__name__}）: {e}")
+            with lock:
+                report_errors.append((f"{job.sc.name} @ {job.platform}", reason, job.out))
+            events.emit("error", scenario=job.sc.name, platform=job.platform, file=str(job.file), reason=reason)
+            printer(f"✗ {job.sc.name} @ {job.platform}: {reason}")
 
     def open_driver(dev: Device) -> bool:
         if dev.driver is None and not dev.error:
@@ -237,11 +281,12 @@ def cmd_run(a: argparse.Namespace) -> int:
                 pass
             dev.driver = None
 
-    def skip(job: Job, reason: str) -> None:
+    def skip(job: Job, reason: str, say: Callable[[str], None] = _out) -> None:
+        """say: how to print it (a running job's printer: under the lock, with the device name)."""
         with lock:
             skipped.append((f"{job.sc.name} @ {job.platform}", reason))
         events.emit("error", scenario=job.sc.name, platform=job.platform, file=str(job.file), reason=reason)
-        _out(f"✗ {job.sc.name} @ {job.platform}: {reason}")
+        say(f"✗ {job.sc.name} @ {job.platform}: {reason}")
 
     interrupted = False
     started: set[int] = set()
@@ -311,7 +356,7 @@ def cmd_run(a: argparse.Namespace) -> int:
 
     results.sort(key=lambda r: r[0])
     statuses = [r.status for _, r, _ in results]
-    errored = errored or any(s == "error" for s in statuses)
+    errored = errored or bool(report_errors) or any(s == "error" for s in statuses)
     if errored or interrupted or skipped:
         code = 2
     elif any(s == "fail" for s in statuses):
@@ -323,14 +368,27 @@ def cmd_run(a: argparse.Namespace) -> int:
     pairs = [(r, out) for _, r, out in results]
     summary = {k: statuses.count(k) for k in ("pass", "pass_warn", "fail", "error")}
     summary["skipped"] = len(skipped)
-    summary_path = write_summary(pairs, run_dir, code, skipped, redactor)
+    summary["report_errors"] = len(report_errors)
+    try:
+        summary_path = write_summary(pairs, run_dir, code, skipped, redactor, report_errors)
+    except Exception as e:  # noqa: BLE001 — e.g. a full disk: the run still ends with its listing, unfinished
+        traceback_to_stderr(redactor)
+        code = 2
+        summary_path = run_dir / "summary.md"
+        reason = redactor.text(f"まとめ（summary.md）を書けない（{type(e).__name__}）: {e}")
+        events.emit("error", reason=reason)
+        _out(f"✗ {reason}")
     events.emit("run_end", exit_code=code, summary=summary, report=f" {summary_path}")
     events.close()
     _out("")
+    unwritten = {out for _, _, out in report_errors}
     for res, out in pairs:
-        _out(f"{STATUS_LABEL[res.status]:<8} {res.name} @ {res.platform}  {out / 'report.html'}")
+        where = "（レポートを書けなかった）" if out in unwritten else out / "report.html"
+        _out(f"{STATUS_LABEL[res.status]:<8} {res.name} @ {res.platform}  {where}")
     for name, reason in skipped:
         _out(f"{'未実行':<8} {name}: {reason}")
+    for name, reason, _ in report_errors:
+        _out(f"{'記録失敗':<8} {name}: {reason}")
     _out(f"まとめ: {summary_path}（終了コード {code}）")
     return code
 
@@ -406,17 +464,44 @@ def cmd_check(a: argparse.Namespace) -> int:
 
 
 def cmd_setup(a: argparse.Namespace) -> int:
+    backend = _backend(a)
+    if backend is None:
+        return 2
     ok = True
     claude = shutil.which("claude")
     if claude:
         v = subprocess.run([claude, "--version"], capture_output=True, text=True, encoding="utf-8",
                            errors="replace").stdout.strip()
         _out(f"OK   claude: {v}")
+    elif backend == "api":
+        _out("--   claude（Claude Code CLI）なし（--backend api では使わない）")
     else:
-        _out("NG   claude（Claude Code CLI）が見つからない: https://docs.claude.com/claude-code")
+        _out("NG   claude（Claude Code CLI）が見つからない: https://docs.claude.com/claude-code"
+             "（API キーで動かすなら --backend api）")
         ok = False
-    _out("OK   ANTHROPIC_API_KEY あり（--backend api で使える）" if os.environ.get("ANTHROPIC_API_KEY")
-         else "--   ANTHROPIC_API_KEY なし（--backend api を使う場合だけ要る）")
+    from .ai import AIError
+    from .ai.api import check_base_url, load_key
+
+    # The same checks as uiai run --backend api, each shown on its own. A missing key is not a failure here:
+    # in CI it is often given only to the step that runs the scenarios.
+    for name, check in (("ANTHROPIC_API_KEY", load_key), ("ANTHROPIC_BASE_URL", check_base_url)):
+        value = os.environ.get(name, "").strip()
+        if not value:
+            if name == "ANTHROPIC_API_KEY":
+                _out("--   ANTHROPIC_API_KEY なし（" + ("uiai run のときに要る" if backend == "api" else
+                                                    "--backend api か、CI で Claude Code を API キーで動かすときに要る")
+                     + "）")
+            continue
+        try:
+            check()
+        except AIError as e:
+            if backend == "api":
+                _out(f"NG   {e}")
+                ok = False
+            else:  # claude -p reads it too, but checks it its own way
+                _out(f"--   {e}（--backend api では使えない。Claude Code もこの値を読む）")
+            continue
+        _out(f"OK   {name} あり")
     adb = shutil.which("adb")
     _out(f"OK   adb: {adb}" if adb else "--   adb なし（Android を使う場合は Android SDK Platform-Tools を入れる）")
     if sys.platform == "darwin":
@@ -546,6 +631,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--skip-browser", action="store_true")
     s.add_argument("--with-deps", action="store_true",
                    help="ブラウザに必要な OS のライブラリも入れる（Linux の CI 用。sudo が要る）")
+    s.add_argument("--backend", choices=BACKENDS,
+                   help="使う AI の呼び出し方（uiai run と同じ。api なら claude がなくてもよい）。"
+                        "環境変数 UIAI_BACKEND でも指定できる")
     s.set_defaults(fn=cmd_setup)
 
     w = sub.add_parser("watch", help="実行中の失敗を 1 行ずつ表示する（Monitor 用）")

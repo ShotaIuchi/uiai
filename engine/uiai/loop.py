@@ -20,7 +20,7 @@ from .ai.protocol import (Ask, build_judge_message, build_message, judge_system_
                           system_prompt)
 from .drivers.base import STALE, Driver, DriverError
 from .events import EventLog
-from .redact import Redactor
+from .redact import Redactor, traceback_to_stderr
 from .scenario import Item, Scenario, fill_secrets, render
 
 EXECUTABLE = ("tap", "input", "key", "scroll", "back", "launch")
@@ -91,7 +91,8 @@ class ScenarioResult:
     platform: str
     target: str
     model: str
-    backend: str = "claude-code"  # claude-code | api
+    backend: str = ""  # claude-code | api: the one asked for, then the one each opened session reports
+    model_id: str = ""  # the model ID sent, when the backend knows it (api); claude-code resolves it itself
     status: str = "pass"   # pass | pass_warn | fail | error | skipped
     error: str = ""
     steps: list[StepResult] = field(default_factory=list)
@@ -115,7 +116,7 @@ class ScenarioRunner:
                  events: EventLog, redactor: Redactor, model: str,
                  printer: Callable[[str], None] = lambda s: print(s, flush=True), *,
                  rejudge_factory: Callable[[str], object] | None = None, rejudge_model: str = "",
-                 backend: str = "claude-code"):
+                 backend: str = ""):
         self.sc, self.platform, self.app, self.drv = sc, platform, target, driver
         self.ai_factory, self.values, self.out = ai_factory, values, out_dir
         self.rejudge_factory, self.rejudge_model = rejudge_factory, rejudge_model
@@ -123,7 +124,7 @@ class ScenarioRunner:
         self.cfg = sc.config
         self.secrets = sc.secret_names
         self.ai = None
-        self.res = ScenarioResult(sc.name, str(sc.path), platform, target, model, backend,
+        self.res = ScenarioResult(sc.name, str(sc.path), platform, target, model, backend=backend,
                                   check_warnings=[str(w) for w in sc.warnings])
         self.steps = {it.index: StepResult(it.index, it.kind, it.section, it.origin, self.text(it), it.strict)
                       for it in sc.items}
@@ -164,6 +165,8 @@ class ScenarioRunner:
         up (~0.4 s) while the next screen settles, since this runs before the next observe."""
         old = self.ai
         self.ai = self.ai_factory(self.system)
+        self.res.backend = getattr(self.ai, "backend", self.res.backend)  # what actually runs wins
+        self.res.model_id = getattr(self.ai, "model_id", self.res.model_id)
         self.session_no += 1
         self.session_calls = self.session_tokens = 0
         self.carry_history = self.session_no > 1
@@ -327,7 +330,8 @@ class ScenarioRunner:
             return False
         r = parse_judge(reply)
         rec.setdefault("rejudge", []).append({
-            "then": t.text, "model": self.rejudge_model, "pass": None if r is None else r["pass"],
+            "then": t.text, "model": self.rejudge_model, "model_id": getattr(s, "model_id", ""),
+            "pass": None if r is None else r["pass"],
             "reason": reply[:200] if r is None else r["reason"], "read": None if r is None else r["read"],
             "llm_s": meta["wall_s"], "in_tokens": meta["in_tokens"], "out_tokens": meta["out_tokens"]})
         if r is None:
@@ -345,7 +349,8 @@ class ScenarioRunner:
         self.warn(step, f"判定が分かれた: {self.res.model} は不合格（{first}）、{label}で合格")
         return True
 
-    def finalize(self, t: ThenState, status: str, reason: str | None = None) -> None:
+    def finalize(self, t: ThenState, status: str, reason: str | None = None, not_run: int = 0) -> None:
+        """not_run: steps that will not be run because of this failure (reported with it)."""
         t.final = status
         step = self.steps[t.item.index]
         step.status = status
@@ -355,8 +360,10 @@ class ScenarioRunner:
             self.res.stop_all = self.cfg.on_failure == "stop_all"
             img = self.res.calls[step.calls[-1] - 1]["image"] if step.calls else None
             self.ev("fail", section=step.section, step=step.index + 1, kind="then", text=step.text,
-                    reason=step.reason, read=step.read, image=str(self.out / img) if img else None)
-            self.print(self.redact.text(f"  ✗ then 不合格 [{step.section}] 「{step.text}」: {step.reason}"))
+                    reason=step.reason, read=step.read, image=str(self.out / img) if img else None,
+                    **({"not_run": not_run} if not_run else {}))
+            self.print(self.redact.text(f"  ✗ then 不合格 [{step.section}] 「{step.text}」: {step.reason}"
+                                        + (f"（残り {not_run} ステップは未実行）" if not_run else "")))
 
     def recheck_action(self, res: dict, rec: dict, step: StepResult | None) -> None:
         """While a `then` is being re-checked: run only verify/interrupt actions, otherwise wait."""
@@ -496,12 +503,16 @@ class ScenarioRunner:
         return True, ""
 
     # ------------------------------------------------------------------ scenario
+    def fail_pending(self, pending: list[ThenState], reason: str, not_run: int = 0) -> None:
+        """Fail the `then`s still undecided because of `reason`. The last one reports `not_run`."""
+        undecided = [t for t in pending if t.final is None]
+        for n, t in enumerate(undecided, 1):
+            self.finalize(t, "fail", f"判定できなかった（{reason}）", not_run=not_run if n == len(undecided) else 0)
+
     def fail_do(self, it: Item, reason: str, rest: list[Item], pending: list[ThenState]) -> None:
         step = self.steps[it.index]
         step.status, step.reason = "fail", reason
-        for t in pending:
-            if t.final is None:
-                self.finalize(t, "fail", f"判定できなかった（{reason}）")
+        self.fail_pending(pending, reason)  # the `do` failure below reports the steps left unrun
         img = self.res.calls[step.calls[-1] - 1]["image"] if step.calls else None
         self.ev("fail", section=it.section, step=it.index + 1, kind="do", text=step.text, reason=reason,
                 image=str(self.out / img) if img else None, not_run=len(rest))
@@ -527,7 +538,12 @@ class ScenarioRunner:
                     break
                 if si > 0 and self.cfg.on_failure == "next_section":
                     if pending:
-                        self.judge_only(pending)
+                        try:
+                            self.judge_only(pending)
+                        except StopScenario as e:  # the scenario's time ran out: the rest is not run
+                            self.fail_pending(pending, str(e), not_run=sum(len(x.items) for x in sections[si:]))
+                            pending = []
+                            break
                         pending = []
                     self.drv.reset(self.app, self.cfg)
                     self.section_first_do = True
@@ -569,18 +585,24 @@ class ScenarioRunner:
                 try:
                     self.judge_only(pending)
                 except StopScenario as e:
-                    for t in pending:
-                        if t.final is None:
-                            self.finalize(t, "fail", str(e))
+                    self.fail_pending(pending, str(e))
             if self.cfg.stop_app_after:
                 self.drv.stop_app(self.app)
-        except (AIError, DriverError) as e:
-            self.res.status, self.res.error = "error", self.redact.text(str(e))
+        except Exception as e:  # noqa: BLE001 — an unexpected failure still ends as a recorded error
+            if isinstance(e, (AIError, DriverError)):
+                msg = str(e)
+            else:
+                msg = f"想定外のエラー（{type(e).__name__}）: {e}"
+                traceback_to_stderr(self.redact)  # the message alone cannot locate it
+            self.res.status, self.res.error = "error", self.redact.text(msg)
             self.ev("error", reason=self.res.error)
             self.print(f"  ✗ 実行エラー: {self.res.error}")
         finally:
             if self.ai is not None:
-                self.ai.close()
+                try:
+                    self.ai.close()
+                except Exception:  # noqa: BLE001 — the scenario is over; its result must not be lost to this
+                    traceback_to_stderr(self.redact)
             for th in self.closing:
                 th.join(timeout=15)
             self.res.seconds = round(self.elapsed(), 1)

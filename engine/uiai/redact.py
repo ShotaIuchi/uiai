@@ -30,3 +30,13 @@ class Redactor:
         if isinstance(obj, (list, tuple)):
             return [self(v) for v in obj]
         return obj
+
+
+def traceback_to_stderr(redactor: Redactor) -> None:
+    """The traceback of the exception being handled, secrets hidden. For diagnosis: a result records an
+    unexpected error as one line, which does not say where it happened."""
+    import sys
+    import traceback
+
+    sys.stderr.write(redactor.text(traceback.format_exc()))
+    sys.stderr.flush()

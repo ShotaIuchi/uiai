@@ -108,6 +108,62 @@ def test_key_from_the_environment(monkeypatch):
     assert t.calls[0]["headers"]["x-api-key"] == "sk-env"
 
 
+def test_a_trailing_newline_in_the_key_is_removed(monkeypatch):
+    """A secret pasted with a newline: urllib would refuse the header with the key in its message."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env\n")
+    t = FakeTransport(reply())
+    ApiSession("haiku", "SYSTEM", post=t).ask("x")
+    assert t.calls[0]["headers"]["x-api-key"] == "sk-env"
+
+
+def test_a_key_of_only_whitespace_is_no_key():
+    with pytest.raises(AIError, match="ANTHROPIC_API_KEY がない"):
+        api.load_key(" \n")
+
+
+@pytest.mark.parametrize("key", ["sk-a b", "sk-a\nb", "sk-ä"])
+def test_a_key_that_cannot_go_in_a_header_is_refused_without_showing_it(key):
+    with pytest.raises(AIError, match="使えない文字") as e:
+        ApiSession("haiku", "SYSTEM", api_key=key, post=FakeTransport(reply()))
+    assert key not in str(e.value)
+
+
+@pytest.mark.parametrize("url", ["proxy.local:8080", "http://proxy:abc", "https://", "ftp://proxy"])
+def test_a_malformed_base_url_is_refused(monkeypatch, url):
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", url)
+    with pytest.raises(AIError, match="http:// か https://"):
+        session(FakeTransport(reply()))
+
+
+def test_the_config_check_names_every_problem(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "proxy.local")
+    with pytest.raises(AIError) as e:
+        api.check_config()
+    assert "ANTHROPIC_API_KEY がない" in str(e.value) and "ANTHROPIC_BASE_URL" in str(e.value)
+
+
+def test_a_blank_base_url_is_unset(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "  ")
+    t = FakeTransport(reply())
+    session(t).ask("x")
+    assert t.calls[0]["url"] == "https://api.anthropic.com/v1/messages"
+
+
+def test_a_malformed_base_url_is_not_shown_since_it_may_carry_a_token(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "gateway.corp/v1?key=SECRET")
+    with pytest.raises(AIError) as e:
+        session(FakeTransport(reply()))
+    assert "SECRET" not in str(e.value)
+
+
+def test_a_base_url_with_credentials_is_refused_without_showing_them(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://user:pa55word@proxy.local")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", KEY)
+    with pytest.raises(AIError, match="ユーザー名・パスワード") as e:
+        api.check_config()
+    assert "pa55word" not in str(e.value)
+
+
 # ---------------------------------------------------------------------------- conversation
 
 
@@ -173,12 +229,33 @@ def test_thinking_blocks_are_not_part_of_the_reply_and_usage_counts_cached_input
     assert t.body()["messages"][1]["content"] == [{"type": "text", "text": '{"a":1}'}]
 
 
-def test_an_empty_reply_is_returned_empty_but_kept_non_empty_in_the_history():
-    t = FakeTransport(reply(content=[]), reply())
+@pytest.mark.parametrize("content", [[], [{"type": "text", "text": " \n "}]])
+def test_an_empty_reply_is_returned_as_it_is_but_kept_non_empty_in_the_history(content):
+    t = FakeTransport(reply(content=content), reply())
     s = session(t)
-    assert s.ask("x")[0] == ""
+    assert s.ask("x")[0].strip() == ""
     s.ask("y")
     assert t.body()["messages"][1]["content"][0]["text"] == api.EMPTY_REPLY
+
+
+def test_an_empty_screenshot_is_never_sent_as_an_image():
+    t = FakeTransport(reply())
+    session(t).ask("x", b"")
+    assert t.body()["messages"][0]["content"][0] == {"type": "text", "text": api.OMITTED}
+
+
+def test_a_lone_surrogate_in_the_text_does_not_break_the_request():
+    t = FakeTransport(reply())
+    session(t).ask("bad \ud800 char")
+    assert t.body()["messages"][0]["content"][0]["text"] == "bad ? char"
+
+
+def test_only_the_screenshots_still_sent_are_kept_in_memory():
+    s = session(FakeTransport(reply()))
+    for i in range(5):
+        s.ask(str(i), f"JPEG{i}".encode())
+    s.ask("text only")
+    assert [img for _, img, _ in s.turns] == [b"", b"", b"", b"JPEG3", b"JPEG4", None]
 
 
 # ---------------------------------------------------------------------------- errors and retries
@@ -201,11 +278,27 @@ def test_gives_up_after_the_retries():
     assert sleeps == [1.0, 2.0, 4.0] and len(t.calls) == 4
 
 
+@pytest.mark.parametrize("value", ["nan", "inf", "soon"])
+def test_a_retry_after_that_is_not_a_number_of_seconds_falls_back_to_backoff(value):
+    sleeps: list[float] = []
+    t = FakeTransport(error(429, headers={"retry-after": value}), reply())
+    session(t, sleeps=sleeps).ask("x")
+    assert sleeps == [1.0]
+
+
 def test_retry_after_is_capped():
     sleeps: list[float] = []
     t = FakeTransport(error(429, headers={"retry-after": "3600"}), reply())
     session(t, sleeps=sleeps).ask("x")
     assert sleeps == [api.MAX_RETRY_WAIT]
+
+
+def test_a_key_echoed_in_an_error_body_is_masked_before_the_message_is_shortened():
+    """A key straddling the cut would otherwise survive in part."""
+    t = FakeTransport(error(400, "invalid_request_error", "x" * 290 + KEY))
+    with pytest.raises(AIError) as e:
+        session(t).ask("x")
+    assert KEY[:8] not in str(e.value)
 
 
 @pytest.mark.parametrize("status,typ", [(400, "invalid_request_error"), (401, "authentication_error"),
@@ -224,6 +317,20 @@ def test_an_unreadable_error_body_is_shown_as_text():
     t = FakeTransport((502, {}, b"<html>Bad Gateway</html>"), (400, {}, b"plain"))
     with pytest.raises(AIError, match="plain"):
         session(t).ask("x")
+
+
+def test_a_transport_error_that_another_attempt_cannot_fix_is_not_retried():
+    sleeps: list[float] = []
+    t = FakeTransport(TransportError("certificate verify failed", retry=False))
+    with pytest.raises(AIError, match="接続できない: certificate verify failed"):
+        session(t, sleeps=sleeps).ask("x")
+    assert sleeps == [] and len(t.calls) == 1
+
+
+def test_urllib_transport_does_not_retry_a_malformed_url():
+    with pytest.raises(TransportError) as e:
+        api.urllib_post("http://127.0.0.1:abc/v1/messages", {}, b"{}", 5)
+    assert e.value.retry is False
 
 
 def test_connection_errors_are_retried():
@@ -249,6 +356,74 @@ def test_a_failed_call_leaves_the_conversation_as_it_was():
 def test_unreadable_success_body_is_an_error():
     with pytest.raises(AIError, match="読めない"):
         session(FakeTransport((200, {}, b"not json"))).ask("x")
+
+
+@pytest.mark.parametrize("body", [b"[]", b'"ok"', b"{}", b'{"content": "text"}'])
+def test_a_success_body_of_the_wrong_shape_is_an_error(body):
+    s = session(FakeTransport((200, {}, body)))
+    with pytest.raises(AIError, match="形が想定と違う"):
+        s.ask("x")
+    assert s.turns == []
+
+
+def test_a_reply_cut_off_at_the_output_limit_is_an_error():
+    body = {"content": [{"type": "text", "text": '{"verify": ['}], "stop_reason": "max_tokens"}
+    s = session(FakeTransport((200, {}, json.dumps(body).encode())))
+    with pytest.raises(AIError, match="max_tokens"):
+        s.ask("x")
+    assert s.turns == []
+
+
+@pytest.mark.parametrize("stop,says", [("refusal", "拒否"), ("model_context_window_exceeded", "入力の上限")])
+def test_a_refused_or_overflowing_reply_is_an_error_not_an_empty_answer(stop, says):
+    """Otherwise the loop takes the empty reply as unreadable and fails the app under test (exit 1)."""
+    body = {"content": [], "stop_reason": stop}
+    s = session(FakeTransport((200, {}, json.dumps(body).encode())))
+    with pytest.raises(AIError, match=says):
+        s.ask("x")
+    assert s.turns == []
+
+
+def test_odd_content_items_and_usage_values_are_ignored():
+    body = {"content": ["text", None, {"type": "text", "text": 5}, {"type": "text", "text": "{}"}],
+            "usage": {"input_tokens": "10", "output_tokens": 3}}
+    text, meta = session(FakeTransport((200, {}, json.dumps(body).encode()))).ask("x")
+    assert text == "{}" and meta["in_tokens"] == 0 and meta["out_tokens"] == 3
+
+
+def test_any_other_transport_failure_becomes_an_ai_error_with_the_key_masked():
+    t = FakeTransport(ValueError(f"Invalid header value {KEY!r}"))
+    with pytest.raises(AIError, match=r"呼び出せない（ValueError）") as e:
+        session(t).ask("x")
+    assert KEY not in str(e.value) and "****" in str(e.value)
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, s):
+        self.now += s
+
+
+def test_one_call_with_its_retries_ends_within_the_timeout():
+    """Like ClaudeCodeSession, the timeout bounds the whole call, not each attempt."""
+    clock = FakeClock()
+    timeouts: list[float] = []
+
+    def slow_overload(url, headers, body, timeout):
+        timeouts.append(timeout)
+        clock.now += 50
+        return error(529, "overloaded_error", headers={"retry-after": "10"})
+
+    s = ApiSession("haiku", "SYSTEM", timeout=120, api_key=KEY, post=slow_overload, sleep=clock.sleep, clock=clock)
+    with pytest.raises(AIError, match="120 秒以内に応答が得られない"):
+        s.ask("x")
+    assert timeouts == [120, 60]  # each attempt only gets the time that is left
+    assert clock.now <= 120
 
 
 # ---------------------------------------------------------------------------- real HTTP (local server)
@@ -283,9 +458,87 @@ def test_urllib_transport_against_a_local_server():
         text, meta = s.ask("x", b"j")
     finally:
         srv.shutdown()
+        srv.server_close()
     assert text == '{"ok": true}' and meta["out_tokens"] == 5
     assert sleeps == [0.0]
     assert [x["path"] for x in seen] == ["/v1/messages"] * 2 and seen[0]["key"] == KEY
+
+
+def _server(handler_cls):
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def test_a_redirect_is_not_followed_so_the_key_stays_with_the_configured_host():
+    reached: list[dict] = []
+
+    class Elsewhere(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            reached.append(dict(self.headers))
+            self.send_response(200)
+            self.end_headers()
+
+        do_POST = do_GET  # noqa: N815
+
+        def log_message(self, *args):
+            pass
+
+    other = _server(Elsewhere)
+
+    class Redirect(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.send_response(302)
+            self.send_header("Location", f"http://127.0.0.1:{other.server_port}/elsewhere")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    srv = _server(Redirect)
+    try:
+        s = ApiSession("haiku", "SYSTEM", api_key=KEY, base_url=f"http://127.0.0.1:{srv.server_port}")
+        with pytest.raises(AIError, match="リダイレクトを返した（302") as e:
+            s.ask("x")
+    finally:
+        for x in (srv, other):
+            x.shutdown()
+            x.server_close()
+    assert reached == [] and KEY not in str(e.value)
+
+
+def test_a_slowly_trickling_response_still_ends_at_the_timeout():
+    """urllib's own timeout is per socket operation; a byte every 0.2 s would never trip it."""
+    import time
+
+    class Trickle(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.send_response(200)
+            self.send_header("Content-Length", "100")
+            self.end_headers()
+            try:
+                for _ in range(20):
+                    self.wfile.write(b" ")
+                    self.wfile.flush()
+                    time.sleep(0.2)
+            except OSError:
+                pass
+
+        def log_message(self, *args):
+            pass
+
+    srv = _server(Trickle)
+    try:
+        t0 = time.monotonic()
+        with pytest.raises(TransportError, match="以内に応答が終わらない"):
+            api.urllib_post(f"http://127.0.0.1:{srv.server_port}/v1/messages", {}, b"{}", 1.0)
+        assert time.monotonic() - t0 < 1.5
+    finally:
+        srv.shutdown()
+        srv.server_close()
 
 
 def test_urllib_transport_reports_a_refused_connection():
@@ -319,6 +572,10 @@ def test_a_scenario_runs_through_the_api_backend(make_run):
         'name: t\napp: "http://x"\nsteps:\n  - id: A\n    actions:\n      - do: "tap A"\n'
         '      - then: "A shown"\n      - do: "tap B"\n      - then: "B shown"\n', None, factory=factory)
     assert res.status == "pass", [s.status for s in res.steps]
+    assert res.backend == "api" and res.model_id == "claude-haiku-5-5"  # recorded from the session that ran
+    from uiai import report
+
+    assert "- モデル: haiku（Anthropic API・claude-haiku-5-5）" in report._meta_lines(res)[4]
     assert len(drv.acts) == 2
     assert len(transports) == 1
     calls = transports[0].calls

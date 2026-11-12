@@ -17,9 +17,9 @@
 
 | プラットフォーム | 状況 |
 |---|---|
-| Android | ✅（ASCII 以外の文字入力は未対応） |
+| Android | ✅（ASCII 以外の文字はクリップボード経由で入力する） |
 | Web | ✅（Chromium） |
-| iOS | 予定（Mac のシミュレータ） |
+| iOS | ✅（Mac のシミュレータのみ。ASCII 以外の文字入力は未対応） |
 
 ## コマンド
 
@@ -56,6 +56,7 @@ claude --plugin-dir /path/to/uiai
 | [uv](https://docs.astral.sh/uv/) | 実行エンジンの起動。Python 本体と依存は uv が自動で用意する |
 | Claude Code | AI の呼び出し（ログイン済みであること） |
 | adb | Android（端末かエミュレータを接続しておく） |
+| Xcode と [AXe](https://github.com/cameroncooke/AXe) | iOS（Mac のみ。シミュレータを起動しておく）。AXe は `brew install cameroncooke/axe/axe` |
 | Chromium | Web。初回に `uiai setup` で取得する（`/uiai:test` が必要に応じて実行する） |
 | ffmpeg | 動画からのシナリオ作成 |
 
@@ -135,7 +136,8 @@ CI で使う方法は [docs/ci/](docs/ci/README.md)、エンジンの詳細は [
 ## 注意
 
 - スクリーンショットは Anthropic の API に送られる。秘密の値（`secret: true`）は AI に渡さないが、画面に平文で表示された内容は送られる。機密情報を表示するアプリでは注意する。
-- 実行中は、対象の端末・ブラウザを操作しない。
+- 実行中は、対象の端末・シミュレータ・ブラウザを操作しない。
+- Android で ASCII 以外の文字を入力すると、端末のクリップボードの中身が上書きされる。
 
 ## ディレクトリ構造
 

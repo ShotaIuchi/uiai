@@ -14,6 +14,7 @@
 | [uv](https://docs.astral.sh/uv/) | 唯一の前提。Python 本体と依存（版は `main.py` の先頭で固定）を自動で用意する |
 | Claude Code CLI（`claude`） | AI の呼び出し |
 | adb | Android を動かすとき |
+| Xcode と [AXe](https://github.com/cameroncooke/AXe) | iOS シミュレータを動かすとき（Mac のみ）。AXe は `brew install cameroncooke/axe/axe`（v2.0.3 で確認） |
 | Chromium | Web を動かすとき。`uiai setup` で取得する |
 
 起動はプラグインの `bin/uiai`（Windows の PowerShell からは `bin/uiai.cmd`）から行う。プラグインが有効な間は、Claude Code のシェルの PATH に入っている。中身は `uv run --script engine/main.py` を呼ぶだけ。
@@ -31,11 +32,12 @@ uiai watch --run latest                # 実行中の失敗を 1 行ずつ表示
 
 ```
 uiai run <シナリオかフォルダ>... [--platform android|ios|web|all] [--model haiku]
-         [--serial <adb シリアル>] [--browser-path <chromium>] [--headed]
+         [--serial <adb シリアル>] [--udid <シミュレータ>] [--browser-path <chromium>] [--headed]
          [--var NAME=VALUE]... [--webhook URL] [--run-id ID] [--fail-on-warning] [--dry-run]
 ```
 
-- プラットフォームは `app` と接続中の対象から決まる。複数の候補が残ったら `--platform` を求める
+- プラットフォームは `app` と接続中の対象（Android 端末・起動中の iOS シミュレータ）から決まる。複数の候補が残ったら `--platform` を求める
+- Android 端末が複数つながっていれば `--serial`、iOS シミュレータが複数起動していれば `--udid` で選ぶ
 - 値のない変数は、`--var`、`env:` の環境変数、対話入力の順に解決する。どれもなければ、そのシナリオは実行しない
 - `--webhook`（または環境変数 `UIAI_WEBHOOK_URL`）を指定すると、失敗を `{"text": ...}` で POST する
 - `--dry-run` は実行せずに、シナリオごとの実行先と値のない変数を表示する（実行できなければ終了コード 2）
@@ -90,7 +92,7 @@ cd engine && uv run --no-project --with pyyaml==6.0.3 --with pillow==13.0.0 --wi
 | `uiai/settle.py` | 画面の「変化待ち → 静止待ち」、否定形の `then` の観察、判断後の画面変化の検出 |
 | `uiai/ai/protocol.py` | AI への指示と応答の読み取り |
 | `uiai/ai/claude_code.py` | `claude -p` の持続セッション |
-| `uiai/drivers/` | Android（adb）・Web（Playwright）。iOS は段階 3 |
+| `uiai/drivers/` | Android（adb。ASCII 以外の文字は uiautomator2 でクリップボードから貼り付ける）・iOS（`xcrun simctl` と AXe）・Web（Playwright） |
 | `uiai/events.py` / `notify.py` | イベント出力と Webhook |
 | `uiai/redact.py` | 秘密の値を伏せる |
 | `uiai/report.py` | `result.json`・`report.md`・`report.html`・`summary.md` |

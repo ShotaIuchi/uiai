@@ -12,7 +12,7 @@ UI ツリー・DOM・リソース ID は使わないので、**画面に見え�
 name: "ログインテスト"
 app:
   android: "com.example.app"        # パッケージ名
-  ios: "com.example.App"            # Bundle ID（iOS は今後対応）
+  ios: "com.example.App"            # Bundle ID（Mac のシミュレータ）
   web: "https://example.com/login"  # 最初に開く URL
 
 variables:
@@ -229,9 +229,12 @@ config:
 
 ## 制限
 
-- iOS は今後対応（今は実行できない）。
+- iOS は Mac のシミュレータだけ（実機は未対応）。起動しておいたシミュレータを使い、操作には [AXe](https://github.com/cameroncooke/AXe) が要る。
 - AI が使える操作は、タップ・文字入力・キー・戻る・スクロール・アプリの起動だけ。長押し・ドラッグ・ピンチは使えない。
-- Android は日本語などの ASCII 以外の文字を入力できない（今後対応）。
+- iOS は日本語などの ASCII 以外の文字を入力できない（その `do` は失敗する）。
+- Android の ASCII 以外の文字は、端末のクリップボードに入れて貼り付ける。クリップボードの中身は上書きされ、Android の版によってはクリップボードの読み書きを知らせる表示が出る。
+- iOS の「戻る」は画面の左端からのスワイプ。戻るボタンがある画面では AI がボタンを押す。
+- iOS では `config.clear_data_before` は効かない（アプリのデータは消さない）。
 - Android の `FLAG_SECURE` の画面は撮影すると真っ黒になる可能性が高く、判定できない。
 - スクリーンショットは Anthropic の API に送られる。機密情報を表示するアプリでは注意する。
 

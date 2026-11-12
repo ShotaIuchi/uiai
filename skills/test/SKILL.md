@@ -1,7 +1,7 @@
 ---
 name: test
-description: 自然言語で書いたシナリオ YAML で、Android・Web（iOS は今後）の UI テストを実行する。AI がスクリーンショットを見て 1 ステップずつ操作・判定する。実行はバックグラウンドで進め、失敗はその場でチャットに知らせ、終わったら結果をまとめる。「UI テストを実行して」「このシナリオを走らせて」などで使う。
-argument-hint: "<シナリオかフォルダ>... [--platform android|ios|web|all] [--model haiku] [--var NAME=VALUE] [--serial <adb シリアル>] [--headed]"
+description: 自然言語で書いたシナリオ YAML で、Android・iOS（Mac のシミュレータ）・Web の UI テストを実行する。AI がスクリーンショットを見て 1 ステップずつ操作・判定する。実行はバックグラウンドで進め、失敗はその場でチャットに知らせ、終わったら結果をまとめる。「UI テストを実行して」「このシナリオを走らせて」などで使う。
+argument-hint: "<シナリオかフォルダ>... [--platform android|ios|web|all] [--model haiku] [--var NAME=VALUE] [--serial <adb シリアル>] [--udid <シミュレータ>] [--headed]"
 allowed-tools: Bash(uiai *), Bash(date *)
 ---
 
@@ -22,6 +22,7 @@ allowed-tools: Bash(uiai *), Bash(date *)
 | `--model <名前>` | AI のモデル（既定 haiku） |
 | `--var NAME=VALUE` | 変数の値（繰り返し可） |
 | `--serial <シリアル>` | Android 端末（複数接続しているとき） |
+| `--udid <UDID>` | iOS シミュレータ（複数起動しているとき） |
 | `--headed` | Web のブラウザを表示する |
 | `--fail-on-warning` | 警告付き合格も失敗として扱う |
 | `--webhook <URL>` | 失敗を Slack などにも送る（環境変数 `UIAI_WEBHOOK_URL` でも可） |
@@ -41,7 +42,7 @@ uiai run <シナリオ>... [オプション] --dry-run
 | `uiai: command not found` | プラグインが有効か確認する。uv がなければ入れ方を案内する（https://docs.astral.sh/uv/） |
 | シナリオの形式エラー | エラーを伝え、`/uiai:scenario-check` で直せることを案内して止まる。勝手に直さない |
 | 複数のプラットフォームが候補 | どれで実行するか（`all` も可）をユーザーに聞き、`--platform` を付ける |
-| 実行対象が見つからない | 端末・エミュレータの接続（`adb devices`）を案内する |
+| 実行対象が見つからない | Android は端末・エミュレータの接続（`adb devices`）、iOS はシミュレータの起動（Simulator.app か `xcrun simctl boot <UDID>`）を案内する |
 | 値のない変数（秘密でない） | ユーザーに値を聞き、`--var NAME=VALUE` で渡す |
 | 値のない変数（秘密） | **チャットで値を聞かない**（会話に残るため）。表示された環境変数を設定してから Claude Code を起動し直すか、ユーザー自身が端末で `uiai run` を実行すれば対話入力できることを伝える |
 
@@ -102,10 +103,13 @@ Monitor には寿命の上限がある（環境によっては 10 分）。`watc
 | Chromium がない | `uiai setup` を実行してブラウザを取得し（ユーザーに伝えてから）、もう一度実行する |
 | `claude` がない、認証エラー | Claude Code CLI のインストールとログインを案内する |
 | 端末が見つからない・途中で切れた | `adb devices` の確認を案内する |
-| 日本語を入力する `do` が失敗した | Android は ASCII 以外の入力に未対応（今後対応）であることを伝える |
+| AXe が見つからない（iOS） | `brew install cameroncooke/axe/axe` で入れられることを伝える。入れるのはユーザーに確認してから |
+| 起動中の iOS シミュレータが複数ある | 表示された中からどれを使うかユーザーに聞き、`--udid` を付ける |
+| iOS で日本語を入力する `do` が失敗した | iOS は ASCII 以外の文字の入力に未対応であることを伝える |
 
 ## 注意
 
 - スクリーンショットは Anthropic の API に送られる。秘密の値（`secret: true`）は AI に渡さず、記録からも伏せるが、画面に平文で表示された内容は送られる。
-- 実行中の端末・ブラウザは操作しないよう、ユーザーに伝える。
+- 実行中の端末・シミュレータ・ブラウザは操作しないよう、ユーザーに伝える。
+- Android で ASCII 以外の文字を入力するシナリオは、端末のクリップボードの中身を上書きする。
 - CI で使う方法は、このプラグインの `docs/ci/README.md`。

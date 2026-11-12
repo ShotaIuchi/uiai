@@ -7,6 +7,8 @@
 | `web-demo.yaml` | 同梱の Web 試験アプリ（`web-demo/index.html`） | Chromium（`uiai setup`） |
 | `web-wikipedia.yaml` | ja.wikipedia.org | Chromium、ネットワーク |
 | `android-settings.yaml` | Android の設定アプリ | adb で接続した端末かエミュレータ |
+| `android-japanese-input.yaml` | Android の設定アプリの検索（日本語を入力して strict で確かめる） | 同上。端末のクリップボードを上書きする |
+| `ios-settings.yaml` | iOS の設定アプリ（ダーク外観の切り替え・情報・検索欄への入力） | Mac、Xcode、AXe、起動中の iOS シミュレータ |
 
 ```sh
 bin/uiai run examples/web-demo.yaml

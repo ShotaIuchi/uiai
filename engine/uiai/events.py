@@ -25,6 +25,7 @@ class EventLog:
         self.redact = redactor or Redactor()
         self.listeners: list[Callable[[dict], None]] = []
         self._lock = threading.Lock()
+        self._listen_lock = threading.Lock()
         path.parent.mkdir(parents=True, exist_ok=True)
         self._f = open(path, "a", encoding="utf-8")
 
@@ -33,8 +34,9 @@ class EventLog:
         with self._lock:
             self._f.write(json.dumps(ev, ensure_ascii=False) + "\n")
             self._f.flush()
-        for fn in self.listeners:
-            fn(ev)
+        with self._listen_lock:  # listeners keep counters (Webhook, DesktopNotifier); parallel runs emit at once
+            for fn in self.listeners:
+                fn(ev)
         return ev
 
     def close(self) -> None:

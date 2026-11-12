@@ -45,16 +45,26 @@ def android_serials() -> list[str]:
     return [ln.split("\t")[0] for ln in _run(["adb", "devices"]).splitlines()[1:] if ln.endswith("\tdevice")]
 
 
-def probe(serial: str | None = None, udid: str | None = None) -> dict[str, bool]:
-    """What can run right now: connected Android device, booted iOS simulator, Web (always)."""
-    serials = android_serials()
-    ios = False
-    if sys.platform == "darwin":
-        from .drivers.ios import booted_simulators
+def booted_udids() -> list[str]:
+    if sys.platform != "darwin":
+        return []
+    from .drivers.ios import booted_simulators
 
-        booted = [d["udid"] for d in booted_simulators()]
-        ios = (udid in booted) if udid else bool(booted)
-    return {"android": (serial in serials) if serial else bool(serials), "ios": ios, "web": True}
+    return [d["udid"] for d in booted_simulators()]
+
+
+def _as_list(v: str | list[str] | None) -> list[str]:
+    return [] if not v else [v] if isinstance(v, str) else list(v)
+
+
+def probe(serial: str | list[str] | None = None, udid: str | list[str] | None = None) -> dict[str, bool]:
+    """What can run right now: connected Android device, booted iOS simulator, Web (always).
+    With serials/UDIDs given, at least one of them must be available (the others fail when opened)."""
+    want_s, want_u = _as_list(serial), _as_list(udid)
+    serials, booted = android_serials(), booted_udids()
+    return {"android": any(s in serials for s in want_s) if want_s else bool(serials),
+            "ios": any(u in booted for u in want_u) if want_u else bool(booted),
+            "web": True}
 
 
 def resolve(app: Any, requested: str | None, available: dict[str, bool]) -> list[str]:

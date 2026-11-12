@@ -1,0 +1,6 @@
+# bin/uiai は bash で読むため、Windows で取得しても LF のままにする
+bin/uiai text eol=lf
+*.py text eol=lf
+*.sh text eol=lf
+# cmd.exe は CRLF 前提
+*.cmd text eol=crlf

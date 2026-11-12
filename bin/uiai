@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# uiai の起動スクリプト（mac・Linux・Windows の Git Bash）。前提は uv だけ。
+# プラグインが有効な間、Claude Code のシェルの PATH に入る。CI などではパスで直接呼ぶ。
+set -euo pipefail
+
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do  # シンボリックリンク経由で呼ばれても engine/ を見つける
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  src="$(readlink "$src")"
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+root="$(cd -P "$(dirname "$src")/.." && pwd)"
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo "uiai: uv が見つからない。入れ方: https://docs.astral.sh/uv/getting-started/installation/" >&2
+  exit 2
+fi
+exec uv run --quiet --script "$root/engine/main.py" "$@"

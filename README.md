@@ -31,7 +31,6 @@
 | `/uiai:scenario-check` | シナリオの形式を検査し、直す |
 | `/uiai:record-to-scenario` | 端末を操作しながら録画し、シナリオを作る（Android） |
 | `/uiai:video-to-scenario` | 画面録画の動画からシナリオを作る |
-| `/uiai:create` | 対話形式で新しいスキルを作る |
 
 ## インストール
 
@@ -154,8 +153,7 @@ CI で使う方法は [docs/ci/](docs/ci/README.md)、エンジンの詳細は [
 │   ├── test/              # /uiai:test と、シナリオ仕様（references/scenario-schema.md）
 │   ├── scenario-check/
 │   ├── record-to-scenario/
-│   ├── video-to-scenario/
-│   └── create/
+│   └── video-to-scenario/
 ├── agents/                # 動画からのシナリオ作成用のサブエージェント
 ├── examples/              # 走らせられるシナリオと、受け入れ確認用のシナリオ
 ├── sample/                # 書式の例（実在しないアプリ向け）

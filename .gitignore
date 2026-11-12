@@ -1,2 +1,5 @@
 .wf/local.json
 __pycache__/
+
+# uiai の実行結果
+.uiai/

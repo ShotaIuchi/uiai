@@ -9,7 +9,7 @@
 | `android-settings.yaml` | Android の設定アプリ | adb で接続した端末かエミュレータ |
 
 ```sh
-uv run --script engine/main.py run examples/web-demo.yaml
+bin/uiai run examples/web-demo.yaml
 ```
 
 ## acceptance/（わざと壊したシナリオ）
@@ -25,12 +25,12 @@ uv run --script engine/main.py run examples/web-demo.yaml
 | `interrupt-warning.yaml` | 警告付き合格。Cookie 同意ダイアログを閉じたことが警告になる |
 
 ```sh
-UIAI_DEMO_PASSWORD=password123 uv run --script engine/main.py run examples/acceptance/
+UIAI_DEMO_PASSWORD=password123 bin/uiai run examples/acceptance/
 ```
 
 秘密の値は単独で走らせて確かめる（ほかの受け入れシナリオは `password123` を平文で書いているため、まとめて走らせると検索に引っかかる）。
 
 ```sh
-UIAI_DEMO_PASSWORD=password123 uv run --script engine/main.py run examples/acceptance/secret.yaml --run-id secret-check
+UIAI_DEMO_PASSWORD=password123 bin/uiai run examples/acceptance/secret.yaml --run-id secret-check
 grep -r password123 .uiai/results/secret-check/ || echo "出ていない"
 ```

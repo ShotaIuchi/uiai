@@ -1,34 +1,37 @@
 # uiai
 
-AI駆動のクロスプラットフォームUIテスト自動化ツール。自然言語でテストシナリオを記述し、Claude Visionで結果を検証する。
+自然言語で書いたシナリオで UI テストを実行する Claude Code プラグイン。
+プログラムがループを回し、AI（既定は haiku）が 1 ステップごとにスクリーンショットを見て、操作と判定をする。
 
 ## 特徴
 
-- **自然言語シナリオ** - リソースID不要、日本語でアクションと期待結果を記述
-- **自動要素特定** - UIツリーから自動的にタップ位置を判定
-- **Vision検証** - スクリーンショットを解析して期待結果を自然言語で検証
-- **厳格モード** - UIツリーのテキスト完全一致で厳密に検証可能
+- **自然言語シナリオ** — 日本語で「やること（`do`）」と「期待する画面（`then`）」を書く
+- **画面だけで判断** — UI ツリー・DOM・リソース ID を使わない。事前のコンパイルもない
+- **AI の判断は 1 ステップ 1 回** — 1 回あたり約 1 秒。10 ステップのシナリオで 30〜60 秒が目安
+- **失敗をその場で知らせる** — Claude Code のチャット（使える環境ならデスクトップ通知も）や Webhook に
+- **不具合を隠さない** — 想定外のダイアログを閉じた、何もしなかった、遠回りした、などを警告として残す
+- **秘密の値を AI に渡さない** — `secret: true` の変数は AI に見せず、記録からも伏せる
+- **証拠を残す** — AI に送った画像・タップ位置・判断の理由・読み取った文字をレポートに
 
-## 対応プラットフォーム
+## 対応状況
 
-| プラットフォーム | ステータス | コマンド |
-|-----------------|-----------|---------|
-| Android | ✅ 対応 | `/uiai:android-test` |
-| iOS | ✅ 対応 | `/uiai:ios-test` |
-| Web | ✅ 対応 | `/uiai:web-test` |
+| プラットフォーム | 状況 |
+|---|---|
+| Android | ✅（ASCII 以外の文字入力は未対応） |
+| Web | ✅（Chromium） |
+| iOS | 予定（Mac のシミュレータ） |
 
-## ユーティリティスキル
+## コマンド
 
 | コマンド | 説明 |
-|---------|------|
-| `/uiai:record-to-scenario` | 端末を操作しながら録画し、その録画からシナリオYAMLを自動生成（Android） |
-| `/uiai:video-to-scenario` | 画面録画動画からシナリオYAMLを自動生成 |
-| `/uiai:scenario-check` | シナリオYAMLの検証・自動修正 |
-| `/uiai:create` | 対話形式で新しいスキルを作成 |
+|---|---|
+| `/uiai:test` | シナリオを実行する |
+| `/uiai:scenario-check` | シナリオの形式を検査し、直す |
+| `/uiai:record-to-scenario` | 端末を操作しながら録画し、シナリオを作る（Android） |
+| `/uiai:video-to-scenario` | 画面録画の動画からシナリオを作る |
+| `/uiai:create` | 対話形式で新しいスキルを作る |
 
 ## インストール
-
-uiai は Claude Code プラグインとして配布している。
 
 ```bash
 # Claude Code 内で実行
@@ -46,357 +49,112 @@ claude --plugin-dir /path/to/uiai
 > `~/.claude/skills/uiai-*` と `~/.claude/agents/task/` 配下の uiai エージェントのリンクを削除すること。
 > 残したままだとスキルが二重に読み込まれる。
 
-## シナリオ例
+### 前提
 
-### 基本的なシナリオ
+| もの | 用途 |
+|---|---|
+| [uv](https://docs.astral.sh/uv/) | 実行エンジンの起動。Python 本体と依存は uv が自動で用意する |
+| Claude Code | AI の呼び出し（ログイン済みであること） |
+| adb | Android（端末かエミュレータを接続しておく） |
+| Chromium | Web。初回に `uiai setup` で取得する（`/uiai:test` が必要に応じて実行する） |
+| ffmpeg | 動画からのシナリオ作成 |
+
+## 使い方
+
+```text
+/uiai:test test/scenarios/login.yaml
+/uiai:test test/scenarios/                    # フォルダ内の全シナリオ
+/uiai:test login.yaml --platform web          # app に複数のプラットフォームがあるとき
+/uiai:test login.yaml --var office=大阪支社    # 変数の値を渡す
+```
+
+実行はバックグラウンドで進み、失敗が起きるたびにチャットに届く。終わると結果のまとめと、レポート（`report.html`）の場所が返る。
+
+## シナリオ
 
 ```yaml
 name: "ログインテスト"
 app:
   android: "com.example.app"
-  ios: "com.example.App"
-  web: "https://example.com"
+  web: "https://example.com/login"
 
 variables:
   email: "test@example.com"
-  password: "password123"
-
-steps:
-  - id: "起動"
-    actions:
-      - do: "アプリを起動"
-      - then: "ログイン画面が表示されていること"
-
-  - id: "ログイン"
-    actions:
-      - do: "メールアドレス欄に「(email)」を入力"
-      - do: "パスワード欄に「(password)」を入力"
-      - do: "「ログイン」ボタンをタップ"
-      - then: "ホーム画面が表示されていること"
-```
-
-### 高度なシナリオ
-
-```yaml
-name: "拠点切り替えテスト"
-app:
-  android: "com.example.app"
-  ios: "com.example.App"
-
-variables:
-  # 通常の変数
-  office: "東京本社"
-  # プレースホルダー変数（実行時に入力）
   password:
-
-config:
-  strict: true  # 全体で厳格モードを有効化
-
-steps:
-  - id: "ログイン"
-    actions:
-      - do: "アプリを起動"
-      - do: "パスワード欄に「(password)」を入力"
-      - do: "「ログイン」ボタンをタップ"
-      - then: "ホーム画面が表示されていること"
-
-  - id: "拠点選択"
-    actions:
-      - do: "メニューをタップ"
-      - do: "「拠点切り替え」を選択"
-      - do: "「(office)」をタップ"
-      - then: "「(office)」と表示されていること"
-
-  - id: "再ログイン確認"
-    replay:
-      from: "ログイン"
-      to: "ログイン"
-    actions:
-      - then: "ホーム画面が表示されていること"
-        strict: false  # この検証のみ通常モード
-```
-
-## シナリオ機能
-
-### variables（変数）
-
-シナリオ内で再利用する値を定義する。`(variable_name)` 構文で参照可能。
-
-```yaml
-variables:
-  email: "test@example.com"
-  password: "password123"
+    env: TEST_PASSWORD    # 環境変数から読む
+    secret: true          # AI に渡さず、記録からも伏せる
 
 steps:
   - id: "ログイン"
     actions:
-      - do: "メールアドレス欄に「(email)」を入力"
-```
+      - do: "アプリを起動する"
+      - then: "ログイン画面が表示されていること"
+      - do: "メールアドレス「(email)」、パスワード「(password)」でログインする"
+      - then: "ホーム画面が表示されていること"
+      - then: "エラーが表示されていないこと"
 
-### 対話式入力（プレースホルダー変数）
-
-変数の値を省略または `null` にすると、テスト実行前に対話式で入力を求められる。
-
-```yaml
-variables:
-  email: "test@example.com"  # 固定値
-  password:                  # 実行時に入力
-  api_key: null              # 実行時に入力（明示的）
-  secret:
-    prompt: "シークレットを入力"  # カスタムプロンプト
-```
-
-CI環境などの非対話式環境では、プレースホルダー変数を含むテストはスキップされる。
-
-### strict（厳格モード）
-
-`strict: true` を指定すると、UIツリー/DOMのテキストで完全一致検証を行う。
-
-```yaml
-config:
-  strict: true  # シナリオ全体に適用
-
-steps:
-  - id: "確認"
+  - id: "拠点"
     actions:
+      - do: "メニューから「拠点切り替え」を開き、「東京本社」を選ぶ"
       - then: "「東京本社」と表示されていること"
-        strict: true  # この検証のみ厳格モード
+        strict: true      # 一字一句の完全一致で判定
 ```
 
-- 通常モード: Vision APIで意味的に判定（柔軟）
-- 厳格モード: テキスト完全一致で判定（厳密）
+書き方の全体は [シナリオ仕様](skills/test/references/scenario-schema.md)。
+走らせられる例は [examples/](examples/)。旧形式のシナリオはそのまま読める（`strict` の判定方法の変更と `verify` の廃止は仕様の「旧形式からの変更」を参照）。
 
-### replay（再実行）
+## 結果
 
-過去のセクションの `do` アクションを再実行する。`then` はスキップされる。
-
-```yaml
-steps:
-  - id: "ログイン"
-    actions:
-      - do: "ログインボタンをタップ"
-      - then: "ホーム画面が表示されていること"
-
-  - id: "再確認"
-    replay:
-      from: "ログイン"
-      to: "ログイン"
-    actions:
-      - then: "画面が正しく表示されていること"
+```
+.uiai/results/<run id>/
+  summary.md            全シナリオの結果
+  events.jsonl          失敗・警告などのイベント
+  <シナリオ>-<プラットフォーム>/
+    report.html         画像・タップ位置・AI の理由・判定を時系列で
+    report.md
+    result.json
+    call_NN.jpg         AI に送った画像
 ```
 
-## 使用方法
+作業フォルダの `.gitignore` に `.uiai/` を足しておくとよい。
 
-### Android
+## コマンドラインから使う
 
-```bash
-# Claude Code内で実行
-/uiai:android-test scenarios=test/scenarios/login.yaml
+プラグインが有効な間、Claude Code のシェルでは `uiai` コマンドが使える（`bin/uiai`。Windows の PowerShell からは `bin/uiai.cmd`）。
 
-# 複数シナリオ
-/uiai:android-test scenarios=test/scenarios/*.yaml
-
-# デバイス指定
-/uiai:android-test scenarios=test/scenarios/login.yaml device=emulator-5554
+```sh
+uiai run login.yaml --platform web     # 実行（終了コード 0: 合格 / 1: 不合格・未実行あり / 2: 実行できなかった）
+uiai run login.yaml --dry-run          # 実行せずに、対象と値のない変数を確かめる
+uiai check scenarios/                  # 形式の検査
+uiai watch --run latest                # 実行中の失敗を 1 行ずつ表示
+uiai setup                             # 実行環境の確認と Chromium の取得
 ```
 
-### iOS
+CI で使う方法は [docs/ci/](docs/ci/README.md)、エンジンの詳細は [engine/README.md](engine/README.md)。
 
-```bash
-# Claude Code内で実行
-/uiai:ios-test scenarios=test/scenarios/login.yaml
+## 注意
 
-# 複数シナリオ
-/uiai:ios-test scenarios=test/scenarios/*.yaml
-
-# シミュレータ指定
-/uiai:ios-test scenarios=test/scenarios/login.yaml simulator=<UDID>
-
-# 起動中のシミュレータを使用
-/uiai:ios-test scenarios=test/scenarios/login.yaml simulator=booted
-```
-
-### Web
-
-```bash
-# Claude Code内で実行
-/uiai:web-test scenarios=test/scenarios/login.yaml
-
-# 複数シナリオ
-/uiai:web-test scenarios=test/scenarios/*.yaml
-
-# ブラウザ指定
-/uiai:web-test scenarios=test/scenarios/login.yaml browser=firefox
-
-# ヘッドレスモード無効（ブラウザ表示）
-/uiai:web-test scenarios=test/scenarios/login.yaml headless=false
-```
-
-### シナリオ検証
-
-```bash
-# シナリオYAMLの検証
-/uiai:scenario-check scenarios=test/scenarios/login.yaml
-
-# 自動修正（ドライラン）
-/uiai:scenario-check scenarios=test/scenarios/*.yaml fix=true dry-run=true
-
-# 自動修正（実行）
-/uiai:scenario-check scenarios=test/scenarios/*.yaml fix=true
-```
-
-### スキル作成
-
-```bash
-# 対話形式で新しいスキルを作成
-/uiai:create
-
-# スキル名を指定して開始
-/uiai:create name=selenium-test
-```
-
-### 動画からシナリオ生成
-
-```bash
-# 画面録画からシナリオを自動生成
-/uiai:video-to-scenario video=recordings/login.mp4
-
-# プラットフォーム指定
-/uiai:video-to-scenario video=recordings/ios-flow.mov platform=ios
-
-# 出力先指定
-/uiai:video-to-scenario video=recordings/test.mp4 output=scenarios/my-test.yaml
-```
-
-## 前提条件
-
-### Android
-
-- ADBがインストールされていること
-- Androidデバイス/エミュレータが接続されていること
-- USBデバッグが有効であること
-
-### iOS
-
-- Xcodeがインストールされていること
-- iOS Simulatorが利用可能であること
-- Facebook IDBがインストールされていること
-
-```bash
-# IDBのインストール
-brew tap facebook/fb
-brew install idb-companion
-pip3 install fb-idb
-```
-
-### Web
-
-- Node.js v16以上がインストールされていること
-- Playwrightがインストールされていること
-
-```bash
-# Playwrightのインストール
-npm install -D playwright
-npx playwright install
-```
-
-### 動画からシナリオ生成
-
-- ffmpegがインストールされていること
-
-```bash
-# ffmpegのインストール
-brew install ffmpeg
-```
+- スクリーンショットは Anthropic の API に送られる。秘密の値（`secret: true`）は AI に渡さないが、画面に平文で表示された内容は送られる。機密情報を表示するアプリでは注意する。
+- 実行中は、対象の端末・ブラウザを操作しない。
 
 ## ディレクトリ構造
 
 ```
 .
-├── .claude-plugin/
-│   ├── plugin.json            # プラグインマニフェスト
-│   └── marketplace.json       # マーケットプレイス定義（/plugin marketplace add 用）
-├── skills/                    # /uiai:<skill-name> で呼び出し
-│   ├── android-test/          # Androidテストスキル
-│   ├── ios-test/              # iOSテストスキル
-│   ├── web-test/              # Webテストスキル
-│   ├── scenario-check/        # シナリオ検証スキル
-│   ├── video-to-scenario/     # 動画→シナリオ生成
-│   ├── record-to-scenario/    # 録画→シナリオ生成
-│   └── create/                # スキル作成ウィザード
-├── agents/                    # uiai:<agent-name> として登録されるサブエージェント
-│   ├── adb-test-runner.md
-│   ├── adb-test-evaluator.md
-│   ├── ios-test-runner.md
-│   ├── ios-test-evaluator.md
-│   ├── web-test-runner.md
-│   ├── web-test-evaluator.md
-│   ├── scenario-compiler.md
-│   ├── video-frame-extractor.md
-│   ├── video-frame-analyzer.md
-│   └── video-scenario-generator.md
-└── scripts/                   # Compiled Runner（${CLAUDE_PLUGIN_ROOT}/scripts から参照）
-```
-
-## 出力
-
-### Android
-
-```
-.adb-test/
-└── results/
-    └── <timestamp>/
-        ├── summary.md           # 全体サマリー
-        └── <scenario-name>/
-            ├── report.md        # テストレポート
-            ├── result.json      # 結果JSON
-            ├── step_01.png      # スクリーンショット
-            └── step_01_ui.xml   # UIツリー
-```
-
-### iOS
-
-```
-.ios-test/
-└── results/
-    └── <timestamp>/
-        ├── summary.md           # 全体サマリー
-        └── <scenario-name>/
-            ├── report.md        # テストレポート
-            ├── result.json      # 結果JSON
-            ├── step_01.png      # スクリーンショット
-            └── step_01_ui.json  # UIツリー
-```
-
-### Web
-
-```
-.web-test/
-└── results/
-    └── <timestamp>/
-        ├── summary.md           # 全体サマリー
-        └── <scenario-name>/
-            ├── report.md        # テストレポート
-            ├── result.json      # 結果JSON
-            ├── step_01_before.png  # スクリーンショット（実行前）
-            ├── step_01_after.png   # スクリーンショット（実行後）
-            ├── step_01_dom.html    # DOMスナップショット
-            └── step_01_a11y.json   # アクセシビリティツリー
-```
-
-### 動画→シナリオ生成
-
-```
-.video-to-scenario/
-└── <video-name>/
-    ├── frames/              # 抽出フレーム
-    │   ├── frame_0001.png
-    │   ├── frame_0002.png
-    │   └── ...
-    ├── extraction_info.json # 抽出情報
-    ├── timestamps.jsonl     # タイムスタンプ
-    ├── analysis.json        # 解析結果
-    └── scenario.yaml        # 生成シナリオ
+├── .claude-plugin/        # プラグインのマニフェストとマーケットプレイス定義
+├── bin/                   # uiai コマンド（プラグインが有効な間 PATH に入る）
+├── engine/                # 実行エンジン（Python。uv で起動）
+├── skills/
+│   ├── test/              # /uiai:test と、シナリオ仕様（references/scenario-schema.md）
+│   ├── scenario-check/
+│   ├── record-to-scenario/
+│   ├── video-to-scenario/
+│   └── create/
+├── agents/                # 動画からのシナリオ作成用のサブエージェント
+├── examples/              # 走らせられるシナリオと、受け入れ確認用のシナリオ
+├── sample/                # 書式の例（実在しないアプリ向け）
+├── template/              # シナリオのひな形
+└── docs/                  # 設計・CI
 ```
 
 ## ライセンス

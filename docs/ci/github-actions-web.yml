@@ -1,0 +1,47 @@
+# uiai の Web シナリオを GitHub Actions で実行する例（未検証。docs/ci/README.md を参照）。
+# 使うリポジトリの .github/workflows/ に置き、シナリオのパスと uiai の版を合わせる。
+name: ui-test
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: uiai を取得（版はタグかコミットで固定する）
+        uses: actions/checkout@v4
+        with:
+          repository: ShotaIuchi/uiai
+          ref: main            # 例: v0.2.0 のようなタグ、またはコミットの SHA
+          path: .uiai-plugin
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Claude Code を入れる
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: 実行環境の確認とブラウザの取得
+        run: .uiai-plugin/bin/uiai setup --with-deps
+
+      - name: シナリオを実行
+        env:
+          # どちらか一方: claude setup-token で発行した長期トークン、または API キー
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          UIAI_WEBHOOK_URL: ${{ secrets.UIAI_WEBHOOK_URL }}     # 失敗を Slack などへ（任意）
+          TEST_PASSWORD: ${{ secrets.TEST_PASSWORD }}           # シナリオの env: で読む秘密の値
+        run: .uiai-plugin/bin/uiai run test/scenarios/ --platform web --run-id "ci-${{ github.run_id }}-${{ github.run_attempt }}"
+
+      - name: 結果を保存
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uiai-results
+          path: .uiai/results/

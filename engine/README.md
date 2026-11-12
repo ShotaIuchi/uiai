@@ -16,26 +16,30 @@
 | adb | Android を動かすとき |
 | Chromium | Web を動かすとき。`uiai setup` で取得する |
 
-段階 2 でプラグインの `bin/uiai` から呼べるようにする。それまでは次のように起動する。
+起動はプラグインの `bin/uiai`（Windows の PowerShell からは `bin/uiai.cmd`）から行う。プラグインが有効な間は、Claude Code のシェルの PATH に入っている。中身は `uv run --script engine/main.py` を呼ぶだけ。
 
 ```sh
-uv run --script engine/main.py setup                 # 実行環境の確認とブラウザの取得
-uv run --script engine/main.py check sample/         # シナリオの形式を検査
-uv run --script engine/main.py run examples/web-demo.yaml
-uv run --script engine/main.py watch --run latest    # 実行中の失敗を 1 行ずつ表示
+uiai setup                             # 実行環境の確認とブラウザの取得（Linux の CI では --with-deps）
+uiai check sample/                     # シナリオの形式を検査
+uiai run examples/web-demo.yaml
+uiai watch --run latest                # 実行中の失敗を 1 行ずつ表示
 ```
+
+このリポジトリの中では `bin/uiai ...` と書けば同じことができる。
 
 ## run
 
 ```
 uiai run <シナリオかフォルダ>... [--platform android|ios|web|all] [--model haiku]
          [--serial <adb シリアル>] [--browser-path <chromium>] [--headed]
-         [--var NAME=VALUE]... [--webhook URL] [--run-id ID] [--fail-on-warning]
+         [--var NAME=VALUE]... [--webhook URL] [--run-id ID] [--fail-on-warning] [--dry-run]
 ```
 
 - プラットフォームは `app` と接続中の対象から決まる。複数の候補が残ったら `--platform` を求める
 - 値のない変数は、`--var`、`env:` の環境変数、対話入力の順に解決する。どれもなければ、そのシナリオは実行しない
 - `--webhook`（または環境変数 `UIAI_WEBHOOK_URL`）を指定すると、失敗を `{"text": ...}` で POST する
+- `--dry-run` は実行せずに、シナリオごとの実行先と値のない変数を表示する（実行できなければ終了コード 2）
+- `--run-id` に既にある結果フォルダの名前を指定すると、実行せずに終了コード 2 になる
 
 終了コード:
 
@@ -60,7 +64,9 @@ events.jsonl          失敗・警告などのイベント（uiai watch が読�
 
 ## watch
 
-`uiai watch --run <run id|latest>` は、失敗（`then` の不合格・`do` の失敗・実行エラー）を起きた順に 1 行ずつ出し、実行が終わると終了する。Claude Code の Monitor ツールで見張る用途を想定している。`--all` を付けると警告とシナリオごとの結果も出す。
+`uiai watch --run <run id|latest>` は、失敗（`then` の不合格・`do` の失敗・実行エラー）を起きた順に 1 行ずつ出し、実行が終わると終了する（終了コード 0）。Claude Code の Monitor ツールで見張る用途を想定している。`--all` を付けると警告とシナリオごとの結果も出す。
+
+`--timeout` 秒で見張りをやめる（実行は止めない）。そのときは続きを見るためのコマンド（`--skip <読んだイベント数>` 付き）を出して、終了コード 3 で終わる。Monitor の時間切れより少し短くしておけば、取りこぼさずに張り直せる。
 
 ## テスト
 

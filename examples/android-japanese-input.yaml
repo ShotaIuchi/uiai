@@ -1,0 +1,33 @@
+name: "Android 日本語入力"
+app:
+  android: "com.android.settings"
+
+config:
+  # 検索画面は別パッケージなので、前回の検索画面が残らないよう一緒に停止する
+  reset:
+    - "com.google.android.settings.intelligence"
+
+variables:
+  keyword: "東京タワー"
+
+steps:
+  - id: "起動"
+    actions:
+      - do: "アプリを起動"
+      - then: "設定のトップ画面が表示されていること"
+
+  - id: "検索"
+    actions:
+      - do: "設定の検索を開く"
+      - then: "検索欄が表示されていること"
+
+  - id: "検索実行"
+    actions:
+      - do: "検索欄に「(keyword)」と入力"
+      - then: "検索欄に「(keyword)」と表示されていること"
+        strict: true
+
+  - id: "結果確認"
+    actions:
+      - then: "「(keyword)」に一致する設定がないことが表示されていること"
+        timeout: 15   # 設定全体の検索は、エミュレータでは数秒かかることがある

@@ -4,6 +4,7 @@
 #   "pyyaml==6.0.3",
 #   "pillow==13.0.0",
 #   "playwright==1.65.1",
+#   "uiautomator2==3.7.1",  # Android: non-ASCII text input
 # ]
 # ///
 """uiai engine entry point.

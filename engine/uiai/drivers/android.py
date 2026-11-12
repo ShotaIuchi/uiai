@@ -1,4 +1,11 @@
-"""Android via adb, screenshot only (no UI tree)."""
+"""Android via adb, screenshot only (no UI tree).
+
+ASCII text goes through `adb shell input text`, which cannot type anything else. Other text
+(Japanese...) is pasted into the focused field by uiautomator2: its server (u2.jar, started
+with app_process, no app installed) sets the clipboard and pastes. Side effects: the device
+clipboard is overwritten, and Android may show a "pasted from your clipboard" toast. If that
+route fails, uiautomator2 installs its own input method app (com.github.uiautomator).
+"""
 
 from __future__ import annotations
 
@@ -22,10 +29,12 @@ class AndroidDriver(Driver):
     detect_black = True
 
     def __init__(self, serial: str | None = None, width: int = 540):
-        super().__init__(ignore_top=0.03)  # status bar (clock, notifications)
+        super().__init__(ignore_top=0.03, ignore_right=0.02)  # status bar; fading scroll bar
         if not shutil.which("adb"):
             raise DriverError("adb が見つからない（Android SDK Platform-Tools を入れて PATH に通す）")
         self.base = ["adb"] + (["-s", serial] if serial else [])
+        self.serial = serial
+        self._u2: Any = None
         state = self._adb(["get-state"]).strip()
         if state != "device":
             raise DriverError(f"Android 端末に接続できない（adb get-state: {state or 'なし'}）")
@@ -60,6 +69,21 @@ class AndroidDriver(Driver):
     def stop_app(self, app: str) -> None:
         self._adb(["shell", "am", "force-stop", app])
 
+    def close(self) -> None:
+        if self._u2 is not None:
+            try:
+                self._u2.stop_uiautomator()
+            except Exception:  # noqa: BLE001
+                pass
+            self._u2 = None
+
+    def _paste_text(self, text: str) -> None:
+        if self._u2 is None:
+            import uiautomator2  # only needed for non-ASCII input
+
+            self._u2 = uiautomator2.connect(self.serial)
+        self._u2.send_keys(text)
+
     def _tap(self, action: dict) -> bool:
         p = self.xy(action)
         if p is None:
@@ -74,10 +98,12 @@ class AndroidDriver(Driver):
                 return f"error: tap に座標がない {action}"
         elif t == "input":
             text = str(action.get("text", ""))
-            if not text.isascii():
-                return "error: Android の文字入力は ASCII のみ対応（日本語入力は未対応）"
-            self._tap(action)  # without coordinates: type into the focused field
-            self._adb(["shell", "input text " + shlex.quote(text.replace(" ", "%s"))])
+            if self._tap(action):  # without coordinates: type into the focused field
+                time.sleep(0.3)
+            if text.isascii():
+                self._adb(["shell", "input text " + shlex.quote(text.replace(" ", "%s"))])
+            else:
+                self._paste_text(text)
         elif t == "key":
             key = str(action.get("key", "")).strip()
             code = KEYS.get(key.lower()) or (key if key.isdigit() or key.upper().startswith("KEYCODE_") else None)

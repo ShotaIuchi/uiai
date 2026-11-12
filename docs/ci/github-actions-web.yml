@@ -22,6 +22,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
+      # API キーで動かすなら、jobs.web.env に UIAI_BACKEND: api を設定して、この手順を省ける（未検証）
       - name: Claude Code を入れる
         run: |
           curl -fsSL https://claude.ai/install.sh | bash

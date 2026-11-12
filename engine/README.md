@@ -20,7 +20,7 @@
 起動はプラグインの `bin/uiai`（Windows の PowerShell からは `bin/uiai.cmd`）から行う。プラグインが有効な間は、Claude Code のシェルの PATH に入っている。中身は `uv run --script engine/main.py` を呼ぶだけ。
 
 ```sh
-uiai setup                             # 実行環境の確認とブラウザの取得（Linux の CI では --with-deps）
+uiai setup                             # 実行環境の確認とブラウザの取得（Linux の CI では --with-deps。API キーで動かすなら --backend api）
 uiai check sample/                     # シナリオの形式を検査
 uiai run examples/web-demo.yaml
 uiai watch --run latest                # 実行中の失敗を 1 行ずつ表示
@@ -42,11 +42,11 @@ uiai run <シナリオかフォルダ>... [--platform android|ios|web|all] [--mo
 - Android 端末が複数つながっていれば `--serial`、iOS シミュレータが複数起動していれば `--udid` で選ぶ
 - 値のない変数は、`--var`、`env:` の環境変数、対話入力の順に解決する。どれもなければ、そのシナリオは実行しない。実行の前に、全シナリオの分をまとめて解決する
 - `then` が待ち時間を過ぎても不合格のときは、確定する前に `--rejudge-model`（既定 sonnet）が同じ画像で判定し直す。sonnet が合格とすれば合格にするが、判定が分かれたことを警告に残す。`none` で無効
-- `--backend api`（または環境変数 `UIAI_BACKEND=api`）で、Claude Code を通さずに Anthropic API を直接呼ぶ。`ANTHROPIC_API_KEY` が要り、従量課金になる。画像は最新の 2 枚だけを送るので、入力が伸びにくい。実際の API では未検証（偽の応答での単体テストまで）
+- `--backend api`（または環境変数 `UIAI_BACKEND=api`）で、Claude Code を通さずに Anthropic API を直接呼ぶ。`ANTHROPIC_API_KEY` が要り、従量課金になる。画像は最新の 2 枚だけを送るので、入力が伸びにくい。1 回の呼び出しは、やり直しを含めて 120 秒まで。実際の API では未検証（偽の応答での単体テストまで）
 - `--parallel` は端末ごとに並列で実行する。Android は接続中の全端末、iOS は起動中の全シミュレータ（`--serial`・`--udid` を繰り返して絞れる）、Web は `--browsers` 個（既定 2）のブラウザ。シナリオは空いた端末から順に割り当てる（同じシナリオを全端末で回すのではない）。表示の各行には端末名が付く
 - `--webhook`（または環境変数 `UIAI_WEBHOOK_URL`）を指定すると、失敗を `{"text": ...}` で POST する
 - `--notify`（または環境変数 `UIAI_NOTIFY=1`）を指定すると、失敗（1 回の実行で 5 件まで）と終了を OS のデスクトップ通知でも知らせる。Claude Code を使わずに手元で実行するとき用（mac は osascript、Linux は notify-send、Windows は PowerShell。Windows は未検証）
-- `--dry-run` は実行せずに、シナリオごとの実行先と値のない変数を表示する（実行できなければ終了コード 2）
+- `--dry-run` は実行せずに、シナリオごとの実行先と値のない変数を表示する（`--backend api` なら API キーも確かめる。実行できなければ終了コード 2）
 - `--run-id` に既にある結果フォルダの名前を指定すると、実行せずに終了コード 2 になる
 
 終了コード:

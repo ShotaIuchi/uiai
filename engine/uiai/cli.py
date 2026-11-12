@@ -60,10 +60,15 @@ def cmd_run(a: argparse.Namespace) -> int:
             return 2
         k, v = kv.split("=", 1)
         overrides[k] = v
+    if a.dry_run:
+        return _dry_run(files, overrides, a)
 
     results_dir = Path(a.results_dir)
     run_id = a.run_id or time.strftime("%Y%m%d-%H%M%S")
     run_dir = results_dir / run_id
+    if a.run_id and run_dir.exists():
+        _out(f"run id 「{a.run_id}」の結果フォルダは既にある: {run_dir}（別の --run-id を指定する）")
+        return 2
     if not a.run_id:
         n = 2
         while run_dir.exists():
@@ -177,6 +182,42 @@ def cmd_run(a: argparse.Namespace) -> int:
     return code
 
 
+def _dry_run(files: list[Path], overrides: dict[str, str], a: argparse.Namespace) -> int:
+    """Report what `run` would do (platforms, missing variables) without touching devices or the AI."""
+    from .platform import PlatformError, probe, resolve
+    from .scenario import ScenarioError, load, resolve_variables
+
+    available = None
+    ok = True
+    for f in files:
+        try:
+            sc = load(f)
+        except ScenarioError as e:
+            _out(f"✗ {f}: シナリオの形式エラー: " + "; ".join(str(i) for i in e.issues if i.level == "error"))
+            ok = False
+            continue
+        _, missing = resolve_variables(sc, overrides, interactive=False)
+        if available is None:
+            available = probe(a.serial)
+        try:
+            platforms = resolve(sc.app, a.platform, available)
+        except PlatformError as e:
+            _out(f"✗ {f}（{sc.name}）: {e}")
+            ok = False
+            continue
+        if missing:
+            parts = []
+            for n in missing:
+                var = sc.variables[n]
+                notes = (["秘密"] if var.secret else []) + ([f"環境変数 {var.env}"] if var.env else [])
+                parts.append(n + (f"（{'・'.join(notes)}）" if notes else ""))
+            _out(f"✗ {f}（{sc.name}）: 値のない変数: {', '.join(parts)}")
+            ok = False
+            continue
+        _out(f"OK {f}（{sc.name}）: {', '.join(platforms)} で実行できる")
+    return 0 if ok else 2
+
+
 # --------------------------------------------------------------------------- #
 # check
 # --------------------------------------------------------------------------- #
@@ -227,7 +268,8 @@ def cmd_setup(a: argparse.Namespace) -> int:
         _out("OK   xcrun（iOS は段階 3 で対応予定）" if shutil.which("xcrun") else "--   xcrun なし（iOS は Xcode が必要）")
     if not a.skip_browser:
         _out("...  Playwright のブラウザ（Chromium）を取得する")
-        r = subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"])
+        cmd = [sys.executable, "-m", "playwright", "install"] + (["--with-deps"] if a.with_deps else []) + ["chromium"]
+        r = subprocess.run(cmd)
         if r.returncode == 0:
             _out("OK   Chromium")
         else:
@@ -268,6 +310,7 @@ def cmd_watch(a: argparse.Namespace) -> int:
         _out(f"[uiai] 実行が見つからない: {results_dir / a.run}")
         return 2
     end = time.time() + a.timeout
+    seen = 0
     with open(path, encoding="utf-8") as fh:
         buf = ""
         while time.time() < end:
@@ -279,6 +322,9 @@ def cmd_watch(a: argparse.Namespace) -> int:
             if not buf.endswith("\n"):
                 continue
             line, buf = buf, ""
+            seen += 1
+            if seen <= a.skip:
+                continue
             try:
                 ev = json.loads(line)
             except json.JSONDecodeError:
@@ -289,8 +335,9 @@ def cmd_watch(a: argparse.Namespace) -> int:
             elif t == "run_end":
                 _out(describe(ev))
                 return 0
-    _out("[uiai] watch がタイムアウトした（実行はまだ続いている可能性がある）")
-    return 2
+    _out(f"[uiai] watch の時間切れ（実行はまだ続いている可能性がある）。続きを見る: "
+         f"uiai watch --run {path.parent.name} --skip {seen}")
+    return 3
 
 
 # --------------------------------------------------------------------------- #
@@ -313,6 +360,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--var", action="append", metavar="NAME=VALUE", help="変数の値（繰り返し可）")
     r.add_argument("--webhook", help="失敗を送る Webhook の URL（既定: 環境変数 UIAI_WEBHOOK_URL）")
     r.add_argument("--fail-on-warning", action="store_true", help="警告付き合格も終了コード 1 にする")
+    r.add_argument("--dry-run", action="store_true",
+                   help="実行せずに、対象のプラットフォームと値のない変数だけを表示する")
     r.set_defaults(fn=cmd_run)
 
     c = sub.add_parser("check", help="シナリオの形式を検査する")
@@ -323,6 +372,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("setup", help="実行環境を確認し、ブラウザを取得する")
     s.add_argument("--skip-browser", action="store_true")
+    s.add_argument("--with-deps", action="store_true",
+                   help="ブラウザに必要な OS のライブラリも入れる（Linux の CI 用。sudo が要る）")
     s.set_defaults(fn=cmd_setup)
 
     w = sub.add_parser("watch", help="実行中の失敗を 1 行ずつ表示する（Monitor 用）")
@@ -330,7 +381,8 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--results-dir", default=str(DEFAULT_RESULTS))
     w.add_argument("--all", action="store_true", help="警告とシナリオごとの結果も表示する")
     w.add_argument("--wait", type=float, default=60, help="実行が始まるのを待つ秒数")
-    w.add_argument("--timeout", type=float, default=3 * 3600)
+    w.add_argument("--timeout", type=float, default=3 * 3600, help="この秒数で見張りをやめる（実行は止めない）")
+    w.add_argument("--skip", type=int, default=0, help="先頭のイベントをこの数だけ読み飛ばす（見張りの再開用）")
     w.set_defaults(fn=cmd_watch)
     return ap
 

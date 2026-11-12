@@ -101,11 +101,12 @@ def clock(monkeypatch):
 
 @pytest.fixture
 def make_run(tmp_path, clock):
-    def _make(yaml_text: str, script, driver=None, values=None, fresh_ai=False, rejudge=None):
+    def _make(yaml_text: str, script, driver=None, values=None, fresh_ai=False, rejudge=None, factory=None):
         """fresh_ai: each conversation gets its own FakeAI (returned as a list); `script(msg, n)` then
         sees n counted per conversation. Otherwise one FakeAI serves every conversation.
         rejudge: `rejudge(msg)` -> reply (dict, str, or an exception to raise) of the re-judge model; the
-        FakeAIs it answered through are in `runner.rejudges`."""
+        FakeAIs it answered through are in `runner.rejudges`.
+        factory: `factory(system)` -> session, used instead of FakeAI (`script` is then ignored)."""
         p = tmp_path / "s.yaml"
         p.write_text(yaml_text, encoding="utf-8")
         sc = load(p)
@@ -115,7 +116,9 @@ def make_run(tmp_path, clock):
         out.mkdir(exist_ok=True)
         ev = EventLog(tmp_path / "events.jsonl", red)
         drv = driver or FakeDriver()
-        if fresh_ai:
+        if factory is not None:
+            ai = None
+        elif fresh_ai:
             ai = []
 
             def factory(system):

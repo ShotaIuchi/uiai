@@ -1,7 +1,7 @@
 ---
 name: test
 description: 自然言語で書いたシナリオ YAML で、Android・iOS（Mac のシミュレータ）・Web の UI テストを実行する。AI がスクリーンショットを見て 1 ステップずつ操作・判定する。実行はバックグラウンドで進め、失敗はその場でチャットに知らせ、終わったら結果をまとめる。「UI テストを実行して」「このシナリオを走らせて」などで使う。
-argument-hint: "<シナリオかフォルダ>... [--platform android|ios|web|all] [--model haiku] [--var NAME=VALUE] [--serial <adb シリアル>] [--udid <シミュレータ>] [--headed]"
+argument-hint: "<シナリオかフォルダ>... [--platform android|ios|web|all] [--model haiku] [--var NAME=VALUE] [--serial <adb シリアル>] [--udid <シミュレータ>] [--parallel] [--headed]"
 allowed-tools: Bash(uiai *), Bash(date *)
 ---
 
@@ -20,9 +20,11 @@ allowed-tools: Bash(uiai *), Bash(date *)
 |---|---|
 | `--platform android\|ios\|web\|all` | 実行するプラットフォーム。省略時は `app` と接続中の対象から決まる |
 | `--model <名前>` | AI のモデル（既定 haiku） |
+| `--rejudge-model <名前>` | `then` の不合格を確定する前に判定し直すモデル（既定 sonnet。`none` で無効） |
 | `--var NAME=VALUE` | 変数の値（繰り返し可） |
-| `--serial <シリアル>` | Android 端末（複数接続しているとき） |
-| `--udid <UDID>` | iOS シミュレータ（複数起動しているとき） |
+| `--serial <シリアル>` | Android 端末（複数接続しているとき。`--parallel` では繰り返して複数指定できる） |
+| `--udid <UDID>` | iOS シミュレータ（複数起動しているとき。`--parallel` では繰り返して複数指定できる） |
+| `--parallel` | 端末ごとに並列で実行する（Android は接続中の全端末、iOS は起動中の全シミュレータ、Web は `--browsers` 個のブラウザ。既定 2）。シナリオは空いた端末に割り当てる |
 | `--headed` | Web のブラウザを表示する |
 | `--fail-on-warning` | 警告付き合格も失敗として扱う |
 | `--webhook <URL>` | 失敗を Slack などにも送る（環境変数 `UIAI_WEBHOOK_URL` でも可） |
@@ -54,7 +56,7 @@ run id を決める。日時は推測せず `date +%Y%m%d-%H%M%S` で取り、`t
 uiai run <シナリオ>... [オプション] --run-id <run id>
 ```
 
-1 ステップ 3〜6 秒、10 ステップのシナリオで 30〜60 秒が目安。初回は依存の取得に 1 分ほどかかる。
+1 ステップ 3〜6 秒、10 ステップのシナリオで 30〜60 秒が目安。初回は依存の取得に 1 分ほどかかる。シナリオが多く、端末が複数あるか Web のときは、`--parallel` を付けると速くなることを提案してよい（付けるかはユーザーに聞く）。
 
 ### 3. 失敗を見張る
 
@@ -80,7 +82,7 @@ Monitor には寿命の上限がある（環境によっては 10 分）。`watc
 
 - シナリオごとの結果（合格・警告付き合格・不合格・未実行）と所要時間
 - 不合格のステップ: 期待結果、AI の理由、読み取った文字（strict のとき）
-- 警告（想定外のダイアログを閉じた、何もしなかった、など）と、未実行のステップ
+- 警告（想定外のダイアログを閉じた、何もしなかった、判定が分かれた（haiku は不合格、再判定の sonnet は合格）、など）と、未実行のステップ
 - 詳しく見るためのレポート: `.uiai/results/<run id>/<シナリオ>-<プラットフォーム>/report.html`（画像とタップ位置つき）
 
 不合格の原因がアプリ側かシナリオ側か分からないときは、`result.json` の `calls`（呼び出しごとの操作・理由・判定）と `call_NN.jpg` を見て推測を添える。推測であることは明記する。シナリオの修正は、ユーザーに確認してから行う。

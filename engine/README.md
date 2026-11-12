@@ -31,15 +31,19 @@ uiai watch --run latest                # 実行中の失敗を 1 行ずつ表示
 ## run
 
 ```
-uiai run <シナリオかフォルダ>... [--platform android|ios|web|all] [--model haiku]
-         [--serial <adb シリアル>] [--udid <シミュレータ>] [--browser-path <chromium>] [--headed]
-         [--var NAME=VALUE]... [--webhook URL] [--run-id ID] [--fail-on-warning] [--dry-run]
+uiai run <シナリオかフォルダ>... [--platform android|ios|web|all] [--model haiku] [--rejudge-model sonnet|none]
+         [--serial <adb シリアル>]... [--udid <シミュレータ>]... [--parallel] [--browsers N]
+         [--browser-path <chromium>] [--headed] [--var NAME=VALUE]... [--webhook URL] [--notify]
+         [--run-id ID] [--fail-on-warning] [--dry-run]
 ```
 
 - プラットフォームは `app` と接続中の対象（Android 端末・起動中の iOS シミュレータ）から決まる。複数の候補が残ったら `--platform` を求める
 - Android 端末が複数つながっていれば `--serial`、iOS シミュレータが複数起動していれば `--udid` で選ぶ
-- 値のない変数は、`--var`、`env:` の環境変数、対話入力の順に解決する。どれもなければ、そのシナリオは実行しない
+- 値のない変数は、`--var`、`env:` の環境変数、対話入力の順に解決する。どれもなければ、そのシナリオは実行しない。実行の前に、全シナリオの分をまとめて解決する
+- `then` が待ち時間を過ぎても不合格のときは、確定する前に `--rejudge-model`（既定 sonnet）が同じ画像で判定し直す。sonnet が合格とすれば合格にするが、判定が分かれたことを警告に残す。`none` で無効
+- `--parallel` は端末ごとに並列で実行する。Android は接続中の全端末、iOS は起動中の全シミュレータ（`--serial`・`--udid` を繰り返して絞れる）、Web は `--browsers` 個（既定 2）のブラウザ。シナリオは空いた端末から順に割り当てる（同じシナリオを全端末で回すのではない）。表示の各行には端末名が付く
 - `--webhook`（または環境変数 `UIAI_WEBHOOK_URL`）を指定すると、失敗を `{"text": ...}` で POST する
+- `--notify`（または環境変数 `UIAI_NOTIFY=1`）を指定すると、失敗（1 回の実行で 5 件まで）と終了を OS のデスクトップ通知でも知らせる。Claude Code を使わずに手元で実行するとき用（mac は osascript、Linux は notify-send、Windows は PowerShell。Windows は未検証）
 - `--dry-run` は実行せずに、シナリオごとの実行先と値のない変数を表示する（実行できなければ終了コード 2）
 - `--run-id` に既にある結果フォルダの名前を指定すると、実行せずに終了コード 2 になる
 
@@ -91,8 +95,8 @@ cd engine && uv run --no-project --with pyyaml==6.0.3 --with pillow==13.0.0 --wi
 | `uiai/loop.py` | 実行ループ（`then` の判定・取り直し・観察・割り込みと逸脱の記録・失敗時の打ち切り） |
 | `uiai/settle.py` | 画面の「変化待ち → 静止待ち」、否定形の `then` の観察、判断後の画面変化の検出 |
 | `uiai/ai/protocol.py` | AI への指示と応答の読み取り |
-| `uiai/ai/claude_code.py` | `claude -p` の持続セッション |
+| `uiai/ai/claude_code.py` | `claude -p` の持続セッション（会話が 5 万トークンを超えたら、次のセクションの境目で作り直す） |
 | `uiai/drivers/` | Android（adb。ASCII 以外の文字は uiautomator2 でクリップボードから貼り付ける）・iOS（`xcrun simctl` と AXe）・Web（Playwright） |
-| `uiai/events.py` / `notify.py` | イベント出力と Webhook |
+| `uiai/events.py` / `notify.py` / `desktop.py` | イベント出力、Webhook、デスクトップ通知 |
 | `uiai/redact.py` | 秘密の値を伏せる |
 | `uiai/report.py` | `result.json`・`report.md`・`report.html`・`summary.md` |

@@ -8,7 +8,7 @@
     {
       "name": "uiai",
       "source": "./",
-      "description": "自然言語シナリオの UI テスト（Android / Web、iOS は今後）。AI がスクリーンショットを見て操作・判定する"
+      "description": "自然言語シナリオの UI テスト（Android / iOS シミュレータ / Web）。AI がスクリーンショットを見て操作・判定する"
     }
   ]
 }

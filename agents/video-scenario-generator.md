@@ -26,7 +26,7 @@ Vision解析結果からYAMLシナリオを生成する。適切なセクショ�
 ### Reference Files
 
 - `${CLAUDE_PLUGIN_ROOT}/skills/video-to-scenario/references/scenario-generation.md`
-- `${CLAUDE_PLUGIN_ROOT}/skills/android-test/references/scenario-schema.md`
+- `${CLAUDE_PLUGIN_ROOT}/skills/test/references/scenario-schema.md`
 
 ## Capabilities
 
@@ -259,7 +259,7 @@ steps:
 1. Review and edit [REVIEW] items
 2. Set app package/bundle identifier
 3. Validate with `/uiai:scenario-check scenarios=...`
-4. Test with `/uiai:android-test scenarios=...`
+4. Run with `/uiai:test <scenario>`
 ```
 
 ### エラー時

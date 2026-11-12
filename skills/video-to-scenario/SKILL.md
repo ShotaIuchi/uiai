@@ -19,7 +19,7 @@ references:
   - path: ./references/ffmpeg-extraction.md
   - path: ./references/vision-analysis.md
   - path: ./references/scenario-generation.md
-  - path: ../android-test/references/scenario-schema.md
+  - path: ../test/references/scenario-schema.md
 ---
 
 # uiai Video to Scenario
@@ -150,13 +150,11 @@ brew install ffmpeg
 ## 関連スキル
 
 - `scenario-check` - 生成されたシナリオの検証・修正
-- `android-test` - Androidでのシナリオ実行
-- `ios-test` - iOSでのシナリオ実行
-- `web-test` - Webでのシナリオ実行
+- `test` - 生成したシナリオの実行（`/uiai:test`）
 
 ## リファレンス
 
 - [ffmpeg抽出コマンド](./references/ffmpeg-extraction.md)
 - [Vision解析プロンプト](./references/vision-analysis.md)
 - [シナリオ生成ルール](./references/scenario-generation.md)
-- [シナリオスキーマ](../android-test/references/scenario-schema.md)
+- [シナリオ仕様](../test/references/scenario-schema.md)

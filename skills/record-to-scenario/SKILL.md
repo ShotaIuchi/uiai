@@ -24,8 +24,7 @@ references:
   - path: ../video-to-scenario/references/ffmpeg-extraction.md
   - path: ../video-to-scenario/references/vision-analysis.md
   - path: ../video-to-scenario/references/scenario-generation.md
-  - path: ../android-test/references/scenario-schema.md
-  - path: ../android-test/references/adb-commands.md
+  - path: ../test/references/scenario-schema.md
 ---
 
 # uiai Record to Scenario
@@ -158,7 +157,7 @@ brew install ffmpeg
 
 - `video-to-scenario` - 既存の動画ファイルからシナリオ生成（本スキルの解析部の母体）
 - `scenario-check` - 生成されたシナリオの検証・修正
-- `android-test` - Androidでのシナリオ実行
+- `test` - 生成したシナリオの実行（`/uiai:test`）
 
 ## リファレンス
 
@@ -166,5 +165,4 @@ brew install ffmpeg
 - [ffmpeg抽出コマンド](../video-to-scenario/references/ffmpeg-extraction.md)
 - [Vision解析プロンプト](../video-to-scenario/references/vision-analysis.md)
 - [シナリオ生成ルール](../video-to-scenario/references/scenario-generation.md)
-- [シナリオスキーマ](../android-test/references/scenario-schema.md)
-- [adbコマンド](../android-test/references/adb-commands.md)
+- [シナリオ仕様](../test/references/scenario-schema.md)

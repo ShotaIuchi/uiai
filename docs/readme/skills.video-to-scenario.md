@@ -82,9 +82,7 @@ brew install ffmpeg
 ## 関連スキル
 
 - `/uiai:scenario-check` - 生成されたシナリオの検証・修正
-- `/uiai:android-test` - Androidでのシナリオ実行
-- `/uiai:ios-test` - iOSでのシナリオ実行
-- `/uiai:web-test` - Webでのシナリオ実行
+- `/uiai:test` - 生成したシナリオの実行
 
 ## 出力ディレクトリ
 

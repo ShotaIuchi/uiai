@@ -1,6 +1,6 @@
 # uiai 再設計案: AI を毎ステップ挟む実行方式（コンパイル廃止）
 
-- ステータス: 段階 1（エンジン化）実装済み（14.1）。段階 2 以降は未着手
+- ステータス: 段階 1（エンジン化）・段階 2（プラグイン統合）実装済み（14.1・14.2。CI 上での動作は未検証）。段階 3 以降は未着手
 - 作成日: 2026-11-12（同日、設計レビューの指摘を反映）
 - 根拠となる試作: `prototype/ai-loop/`（コミット `225da4f`。段階 1 で `engine/` へ移植して削除）
 
@@ -144,10 +144,11 @@ uiai/
 ├── skills/test/
 │   ├── SKILL.md                         # /uiai:test
 │   └── references/scenario-schema.md    # シナリオ仕様（3 つに分かれていたものを 1 つに）
-└── skills/scenario-check/ ほか（13 章）
+├── skills/scenario-check/ ほか（13 章）
+└── docs/ci/              # CI での使い方（6.4）と GitHub Actions の例
 ```
 
-- `bin/` に置いたファイルは、プラグインが有効な間、Claude が実行するシェルの PATH に入る（公式仕様）。スキルからは `uiai run ...` とだけ書けばよい。
+- `bin/` に置いたファイルは、プラグインが有効な間、Claude が実行するシェルの PATH に入る（公式仕様。段階 2 で、別の作業フォルダから `claude --plugin-dir` で読み込んで確認済み）。スキルからは `uiai run ...` とだけ書けばよい。`bin/uiai` は改行が LF のままになるよう `.gitattributes` で固定する（Windows で CRLF になると bash で動かない）。
 - 前提は uv だけ。uv は mac・Linux・Windows で動き、Python 本体と依存ライブラリ（画像処理・YAML・Playwright など）を自動で用意する。Playwright 用のブラウザは初回に `uiai setup` で取得する。
 - **依存は版を固定する**（`==` で指定）。Playwright 本体と、`uiai setup` で取得したブラウザの版がずれると動かないため。uv のロックファイル（`uv lock --script`）の併用は段階 1 で検討する。
 - プラグイン用の保存場所 `${CLAUDE_PLUGIN_DATA}` は、スキルから実行するコマンドには渡されない（公式仕様）。依存の管理は uv のキャッシュに任せる。
@@ -185,6 +186,7 @@ iOS ドライバは、撮影・タップ・入力の担当部分（idb をロー
 - AI の呼び出しには Claude Code CLI と、その認証が必要。手元ではユーザーのログインで動くが、CI では API キー（`ANTHROPIC_API_KEY`）か、Claude Code の長期トークン（`claude setup-token` で発行して `CLAUDE_CODE_OAUTH_TOKEN` に設定）を渡す（CI での動作は未検証）。API キーを使える環境なら、段階 4 の API バックエンドの方が向いている。
 - 失敗の通知は Webhook（9 章）、合否は終了コード（12 章）で受け取る。`.uiai/results/` は CI の成果物として保存する。
 - Web は headless のブラウザ、Android は CI 上のエミュレータで動かす。
+- 手順書と GitHub Actions の例は `docs/ci/`（段階 2 で作成。CI 上では未検証）。
 
 ## 7. ドライバ（プラットフォーム部品）
 
@@ -322,7 +324,9 @@ Claude Code のセッションでの流れ:
 3. 失敗が届くたびに、Claude がチャットで知らせる。ユーザーが席を離れていそうなら、デスクトップ通知（PushNotification）も送る。
 4. 実行が終わったら、レポートを要約して返す（警告もここで伝える）。
 
-プラグインの「モニター」機能（`monitors.json` の `when: "on-skill-invoke:test"`）でも同じことができるが、仕様が experimental 扱いのため、まずは Monitor ツールを使う。なお、どちらも非対話モード（`claude -p`）では動かないため、CI での通知は Webhook に任せる。
+プラグインの「モニター」機能（`monitors.json` の `when: "on-skill-invoke:test"`）でも同じことができるが、仕様が experimental 扱いのため、まずは Monitor ツールを使う。Monitor ツールは非対話モード（`claude -p`）でも動いた（段階 2 で確認。届いた失敗に Claude が応答し、実行の終了後にまとめを返した）。ただし CI ではチャットの相手がいないため、通知は Webhook に任せる。
+
+Monitor には寿命の上限があり、30 分を指定しても 10 分で切れる環境があった（段階 2 で確認）。`uiai watch` は `--timeout` で自分から少し早く終わり、続きを読むためのコマンド（`--skip <読んだイベント数>`）を出す。スキルはそれで張り直す。
 
 ## 10. AI の呼び出し
 
@@ -410,17 +414,17 @@ variables:
 
 | 既存 | 扱い |
 |---|---|
-| `skills/android-test`・`ios-test`・`web-test` | `skills/test`（`/uiai:test`）1 つに統合（決定） |
-| 各スキルの `references/scenario-schema.md`（3 つ。iOS 版はリンク切れ、Android 版には `app.web` がない） | `skills/test/references/scenario-schema.md` 1 つにまとめ、11 章の規則を反映 |
-| `agents/*-test-runner`・`*-test-evaluator`（6 つ） | 廃止（エンジンの 1 ステップ 1 呼び出しに置き換え） |
-| `agents/scenario-compiler`、`scripts/`（`compiled_runner.py`・`backends/`・`utils/`）、`references/compile-ir-schema.md` | 廃止 |
-| `.claude/plans/`（uitree_verify の実装計画など） | 廃止（コンパイル前提のため） |
-| `skills/scenario-check` | 継続。エンジンの `uiai check` を呼ぶ形にし、11 章の新ルールを反映 |
+| `skills/android-test`・`ios-test`・`web-test` | `skills/test`（`/uiai:test`）1 つに統合（決定。段階 2 で実施） |
+| 各スキルの `references/scenario-schema.md`（3 つ。iOS 版はリンク切れ、Android 版には `app.web` がない） | `skills/test/references/scenario-schema.md` 1 つにまとめ、11 章の規則を反映（段階 2 で実施） |
+| `agents/*-test-runner`・`*-test-evaluator`（6 つ） | 廃止（エンジンの 1 ステップ 1 呼び出しに置き換え。段階 2 で削除） |
+| `agents/scenario-compiler`、`scripts/`（`compiled_runner.py`・`backends/`・`utils/`）、`references/compile-ir-schema.md` | 廃止（段階 2 で削除） |
+| `.claude/plans/`（uitree_verify の実装計画など） | 廃止（コンパイル前提のため。段階 2 で削除） |
+| `skills/scenario-check` | 継続。エンジンの `uiai check` を呼ぶ形にし、11 章の新ルールを反映（段階 2 で実施） |
 | `sample/`（実在しない `com.example.app` が対象） | 書式の例として残し、`uiai check` の対象にする。実際に走らせられるサンプル（Android 設定アプリ・Web 試験アプリ）を別に用意する |
 | `skills/video-to-scenario`（＋エージェント 3 つ）、`skills/record-to-scenario` | 継続（シナリオを作る側で、実行方式の影響を受けない） |
 | `skills/create` | 廃止候補（プラットフォームの追加はドライバの追加になるため） |
 | `prototype/ai-loop/` | エンジンへ移植したあと削除（段階 1 で削除済み。シナリオは `examples/` へ移動） |
-| 既知の不具合: `skills/ios-test/references/scenario-schema.md` のリンク切れ、`skills/create/SKILL.md.new` の残骸 | 再設計で消える |
+| 既知の不具合: `skills/ios-test/references/scenario-schema.md` のリンク切れ、`skills/create/SKILL.md.new` の残骸 | 段階 2 で削除（どちらも消えた） |
 
 ## 14. 進め方
 
@@ -458,6 +462,32 @@ variables:
 - Android は時間の半分強が撮影と静止待ち（22.5〜25.1 秒）、AI は 12.7〜16.0 秒。Web は AI が大半（23.6〜25.2 秒）で、撮影と静止待ちは 6 秒前後
 - 最後の呼び出しの入力トークンは、Web で約 3.5 万、Android で約 1.7 万（画像が溜まるため。段階 4 の課題）
 
+### 14.2 段階 2 の結果（2026-11-12）
+
+| 完了の目安 | 結果 |
+|---|---|
+| プラグインとして別の作業フォルダから実行でき、失敗がチャットに届く | 確認済み。シナリオだけを置いた別のフォルダで `claude -p --plugin-dir <uiai>` を使い、`/uiai:test` を実行した。実行前の確認（`--dry-run`）→ バックグラウンド実行 → Monitor で `uiai watch` → 失敗のたびにチャットで報告 → 終了後に `summary.md` を要約、まで通った。`bin/uiai` が PATH に入ること、スキルの `allowed-tools` だけで `uiai` を実行できることも確認した。`/uiai:scenario-check` も同じ方法で、`uiai check --json` の結果から修正案を出し、`dry-run` でファイルを変えないことを確認した |
+| CI で Web シナリオが通り、失敗が Webhook に届く | 一部のみ。Webhook はローカルの受信サーバーで確認した（失敗 2 件と終了時のまとめが届いた）。CI での実行は未検証（手順書と GitHub Actions の例は `docs/ci/` に用意した） |
+
+段階 2 で行ったこと:
+
+- `bin/uiai`（bash）と `bin/uiai.cmd`（Windows）。前提は uv だけ。改行コードは `.gitattributes` で固定した
+- `/uiai:test`（`skills/test`）と、1 つにまとめたシナリオ仕様（`skills/test/references/scenario-schema.md`）
+- `/uiai:scenario-check` を `uiai check` を呼ぶ形に書き直し、検査ルールの説明・自動修正ルールを新しいルールに合わせた
+- 旧スキル 3 つ（android-test・ios-test・web-test）、旧エージェント 7 つ、`scripts/`、`.claude/plans/`、`skills/create/SKILL.md.new` を削除した
+- `video-to-scenario`・`record-to-scenario` の参照先を新しい仕様書と `/uiai:test` に変えた
+- README・プラグインの説明・版（0.2.0）を更新した。CI の手順書（`docs/ci/`）を足した
+- エンジンに足したもの: `uiai run --dry-run`（実行先と値のない変数の確認）、既にある run id の拒否、`uiai watch --skip`・`--timeout` での張り直し、`uiai setup --with-deps`
+
+段階 2 で見つけて直したこと:
+
+| 見つかったこと | 対応 |
+|---|---|
+| `uiai check` が、区切りが 2 つのパッケージ名（`com.whatsapp` など）をエラーにしていた（旧ルールの「3 つ以上」を引き継いでいた） | 2 つ以上にした。Android のパッケージ名として正しい形のため |
+| Monitor が 30 分を指定しても 10 分で切れた | `uiai watch --timeout` を 9 分にし、続きを `--skip` で読めるようにした（9 章） |
+| run id の日時を AI が推測で作った | スキルで `date` を使うよう指示し、既にある run id はエンジンが拒むようにした |
+| CI の例を `examples/` に置くと、`uiai check examples/` がシナリオとして読んでエラーにする | `docs/ci/` に置いた |
+
 ## 15. リスクと未検証事項
 
 | 項目 | 内容・対策 |
@@ -473,8 +503,9 @@ variables:
 | 判断後の画面変化 | 動き続ける画面では、判断後の画面変化の検出（8.3）が毎回働き、1 つの `do` につき最大 2 回撮り直す分だけ時間が増える |
 | iOS | idb の速さと安定性は未計測。Windows・Linux からは Mac か実機の準備が必要 |
 | Android の日本語入力 | `adb input text` は非対応。ADB Keyboard などの IME かクリップボード経由が必要（未検証） |
-| Windows | 文字コード・`claude` の起動・PowerShell からの `bin/` 実行は未検証 |
-| CI | `claude -p` の CI での認証（長期トークン）と、CI 上のエミュレータの速さは未検証 |
+| Windows | 文字コード・`claude` の起動・`bin/uiai.cmd`（PowerShell）と `bin/uiai`（Git Bash）からの実行は未検証 |
+| CI | `claude -p` の CI での認証（長期トークン）、`uiai setup --with-deps` での Linux のブラウザの準備、CI 上のエミュレータの速さは未検証（手順は `docs/ci/`） |
+| 見張りの寿命 | Monitor の寿命の上限は環境で違う（10 分の例あり）。`uiai watch` を 9 分で区切って張り直すが、張り直しの間に Claude が別の作業をしていると、失敗の通知が遅れる |
 | 実機 | 計測はエミュレータのみ。USB 接続の実機では撮影速度が変わる可能性がある |
 | Claude Code CLI への依存 | stream-json や画像入力の仕様が変わる可能性がある。API バックエンドを逃げ道として用意する |
 | 画面内容の送信 | スクリーンショットは Anthropic の API に送られる（現行方式も同じ）。画面に平文で出る秘密の値も含まれる。機密情報を含むアプリでの利用は注意事項として明記する |

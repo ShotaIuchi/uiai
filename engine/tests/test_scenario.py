@@ -88,7 +88,8 @@ def test_check_rules(tmp_path, body, code):
 
 @pytest.mark.parametrize("app,ok", [
     ("https://example.com", True), ("web-demo/index.html?bug=1", True), ("com.example.app", True),
-    ("example", False), ({"web": "./a.html", "android": "com.a.b"}, True), ({"desktop": "x"}, False),
+    ("example", False), ("com.whatsapp", True), ("com example app", False),
+    ({"web": "./a.html", "android": "com.a.b"}, True), ({"desktop": "x"}, False),
 ])
 def test_app_format(tmp_path, app, ok):
     import json

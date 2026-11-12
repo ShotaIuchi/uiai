@@ -14,7 +14,7 @@ import yaml
 
 VAR_RE = re.compile(r"(?<!\\)\(([a-zA-Z_][a-zA-Z0-9_]*)\)")
 NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
-PACKAGE_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_-]*){2,}$")
+PACKAGE_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_-]*)+$")  # Android は 2 区切り以上（com.whatsapp など）
 URL_RE = re.compile(r"^https?://", re.I)
 
 PLATFORMS = ("android", "ios", "web")

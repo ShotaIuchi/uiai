@@ -1,579 +1,88 @@
-# Validation Rules
+# 検査ルール
 
-シナリオYAMLファイルの検証ルール定義。
+`uiai check` が出す問題の一覧。判定の正はエンジン（`engine/uiai/scenario.py` の `check_data`）。
+このファイルは、各ルールの意味と直し方の説明用。
 
-## エラー（修正必須）
+エラーがあるシナリオは実行されない。警告は実行に影響しないが、意図と違う動きになる可能性を示す。
 
-エラーはシナリオ実行を阻害する問題。修正が必須。
+## エラー
 
-### E001: `name` 必須
+| コード | 内容 | 直し方 |
+|---|---|---|
+| E000 | YAML の構文エラー、読み込めない、最上位がマッピングでない | YAML の書式を直す |
+| E001 | `name` がない | シナリオ名を書く |
+| E002 | `app` がない | 対象のアプリ・URL を書く |
+| E003 | `steps` がない | セクションを書く |
+| E004 | `steps` が空 | セクションを書く |
+| E005 | セクションがマッピングでない、`id` がない | `- id: "..."` の形にする |
+| E006 | `actions` がない（`replay` もない）、リストでない | `actions:` のリストを書く |
+| E010 | `app` の形式が不正（未知のプラットフォーム、空、パッケージ名・URL として不正） | 下の「app の形式」 |
+| E011 | `id` が重複している | 別の名前にする |
+| E012 | 1 つの行に `do` と `then` がある | 2 行に分ける |
+| E013 | `wait` が数値でない | 秒数（数値）にする |
+| E014 | `strict` や `config` の真偽値が true/false でない | `true` / `false` にする |
+| E015 | `config` の値の型・範囲が不正（正の数でない、リストでないなど）。`then` の `timeout`・`observe` が 0 以上の数でない | 正しい型・値にする |
+| E016 | `config.on_failure`・`config.interrupts.mode` が決められた値でない | `on_failure`: stop_scenario / next_section / stop_all。`interrupts.mode`: allow / report / fail |
+| E020 | `replay` がマッピングでない、`replay.from` のセクションがない | 存在する `id` を書く |
+| E021 | `replay.to` のセクションがない | 存在する `id` を書く |
+| E022 | `replay.from` が `to` より後のセクション | 順序を入れ替える |
+| E023 | `replay` が循環している | 循環を断つ |
+| E030 | 定義されていない変数 `(名前)` を使っている | `variables` に定義するか、文字どおりの括弧なら `\(` `\)` と書く |
+| E031 | `variables` がマッピングでない、変数名が不正 | 変数名は英字か `_` で始まり、英数字と `_` だけ |
+| E032 | 同じ変数名が 2 回定義されている | 1 つにする |
+| E033 | 秘密の変数（`secret: true`）を `then` で使っている | AI に値を渡さないため照合できない。`then` から外す |
+| E034 | アクションがマッピングでない、`do` も `then` もない、文が空 | `- do: "..."` / `- then: "..."` の形にする |
 
-シナリオ名が指定されていない。
+### app の形式
 
 ```yaml
-# NG
-app: "com.example.app"
-steps: [...]
-
-# OK
-name: "ログインテスト"
-app: "com.example.app"
-steps: [...]
+app:
+  android: "com.example.app"     # パッケージ名（英字で始まり、. で区切る）
+  ios: "com.example.App"         # Bundle ID
+  web: "https://example.com"     # http(s)・file の URL、またはシナリオからの相対パスの .html
 ```
 
-**自動修正**: 不可（適切な名前は人間が決定すべき）
+文字列なら、URL・`.html` は Web、それ以外は Android と iOS で共通のパッケージ名・Bundle ID として検査する。
 
-### E002: `app` 必須
+## 警告
 
-アプリパッケージ名が指定されていない。
+| コード | 内容 | 意味 |
+|---|---|---|
+| W001 | `actions` が空 | 何もしないセクション |
+| W002 | セクションに `then` がない | 確かめていないセクション。意図どおりなら問題ない |
+| W003 | `then` が連続している | 問題ではない。1 つにまとめられることが多い |
+| W004 | `config` に未知のキーがある | 綴りの誤りの可能性。無視される |
+| W005 | 変数が使われていない | 消し忘れの可能性 |
+| W006 | 変数に値がなく、実行時の入力が必要 | CI やバックグラウンド実行では、`--var` か `env:` がないと実行されない |
+| W007 | `verify`・`config.verify` が書かれている | 廃止（判定は AI の画像判定に一本化）。無視される |
+| W008 | `config.timeout` が「`do` の数 × 10 秒」より短い | AI 方式は 1 ステップ 3〜6 秒かかる。途中で打ち切られる可能性 |
+| W009 | `do` に `timeout`・`observe` が書かれている | `then` にだけ有効。無視される |
 
-```yaml
-# NG
-name: "テスト"
-steps: [...]
-
-# OK
-name: "テスト"
-app: "com.example.app"
-steps: [...]
-```
-
-**自動修正**: 不可（パッケージ名は特定できない）
-
-### E003: `steps` 必須
-
-steps フィールドが存在しない。
+## 例
 
 ```yaml
-# NG
-name: "テスト"
-app: "com.example.app"
-
-# OK
-name: "テスト"
-app: "com.example.app"
-steps: [...]
-```
-
-**自動修正**: 不可（テスト内容がない）
-
-### E004: `steps` 非空
-
-steps が空配列。
-
-```yaml
-# NG
-steps: []
-
-# OK
-steps:
-  - id: "step_1"
-    actions:
-      - do: "アプリを起動"
-```
-
-**自動修正**: 不可（テスト内容がない）
-
-### E005: `id` 必須
-
-ステップに id が指定されていない。
-
-```yaml
-# NG
-steps:
-  - actions:
-      - do: "アプリを起動"
-
-# OK
-steps:
-  - id: "起動"
-    actions:
-      - do: "アプリを起動"
-```
-
-**自動修正**: 可（`step_1`, `step_2` ... を自動生成）
-
-### E006: `actions` 必須
-
-ステップに actions が指定されていない（replay のみの場合は除く）。
-
-```yaml
-# NG
-steps:
-  - id: "起動"
-
-# OK (actionsあり)
-steps:
-  - id: "起動"
-    actions:
-      - do: "アプリを起動"
-
-# OK (replayのみ)
-steps:
-  - id: "リプレイ"
-    replay:
-      from: "起動"
-      to: "起動"
-```
-
-**自動修正**: 不可（アクション内容は特定できない）
-
-### E010: `app` 形式不正
-
-パッケージ名が Android の形式（`com.xxx.xxx`）に従っていない。
-
-```yaml
-# NG
-app: "example"
-app: "com.example"
-app: "com example app"
-
-# OK
-app: "com.example.app"
-app: "jp.co.example.app"
-```
-
-**検証パターン**: `^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*){2,}$`
-
-**自動修正**: 不可（正しいパッケージ名は特定できない）
-
-### E011: `id` 重複
-
-同一シナリオ内で id が重複。
-
-```yaml
-# NG
-steps:
-  - id: "ログイン"
-    actions: [...]
-  - id: "ログイン"      # 重複
-    actions: [...]
-
-# OK
-steps:
-  - id: "ログイン"
-    actions: [...]
-  - id: "ログイン_2"
-    actions: [...]
-```
-
-**自動修正**: 可（`_2`, `_3` ... サフィックスを追加）
-
-### E012: `do`/`then` 同一行混在
-
-actions 内で do と then が同一オブジェクトに存在。
-
-```yaml
-# NG
-actions:
-  - do: "ボタンをタップ"
-    then: "画面が表示されること"
-
-# OK
-actions:
-  - do: "ボタンをタップ"
-  - then: "画面が表示されること"
-```
-
-**自動修正**: 可（2つの要素に分割）
-
-### E013: `wait` 型不正
-
-wait の値が数値でない。
-
-```yaml
-# NG
-actions:
-  - do: "ボタンをタップ"
-    wait: "3秒"
-  - do: "ボタンをタップ"
-    wait: "three"
-
-# OK
-actions:
-  - do: "ボタンをタップ"
-    wait: 3
-```
-
-**自動修正**: 可（数値抽出を試みる。`"3秒"` → `3`）
-
-### E014: `strict` 型不正
-
-strict の値が boolean でない。
-
-```yaml
-# NG
-actions:
-  - do: "ボタンをタップ"
-    strict: "true"
-  - then: "表示されること"
-    strict: 1
-
-# OK
-actions:
-  - do: "ボタンをタップ"
-    strict: true
-  - then: "表示されること"
-    strict: false
-```
-
-**自動修正**: 可（`"true"` → `true`, `1` → `true` 等）
-
-### E020: `replay.from` 不存在
-
-replay.from で参照している id が存在しない。
-
-```yaml
-# NG
-steps:
-  - id: "ログイン"
-    actions: [...]
-  - id: "確認"
-    replay:
-      from: "初期化"    # 存在しない
-      to: "ログイン"
-
-# OK
-steps:
-  - id: "初期化"
-    actions: [...]
-  - id: "ログイン"
-    actions: [...]
-  - id: "確認"
-    replay:
-      from: "初期化"
-      to: "ログイン"
-```
-
-**自動修正**: 不可（参照先を特定できない）
-
-### E021: `replay.to` 不存在
-
-replay.to で参照している id が存在しない。
-
-```yaml
-# NG
-steps:
-  - id: "ログイン"
-    actions: [...]
-  - id: "確認"
-    replay:
-      from: "ログイン"
-      to: "データ入力"   # 存在しない
-```
-
-**自動修正**: 不可（参照先を特定できない）
-
-### E022: `replay` 順序不正
-
-replay の from が to より後に定義されている。
-
-```yaml
-# NG
-steps:
-  - id: "ログイン"
-    actions: [...]
-  - id: "データ入力"
-    actions: [...]
-  - id: "確認"
-    replay:
-      from: "データ入力"
-      to: "ログイン"     # fromより前に定義されている
-
-# OK
-steps:
-  - id: "ログイン"
-    actions: [...]
-  - id: "データ入力"
-    actions: [...]
-  - id: "確認"
-    replay:
-      from: "ログイン"
-      to: "データ入力"
-```
-
-**自動修正**: 不可（意図が不明）
-
-### E023: `replay` 循環参照
-
-replay が循環参照を形成。
-
-```yaml
-# NG
-steps:
-  - id: "A"
-    replay:
-      from: "B"
-      to: "B"
-    actions: [...]
-  - id: "B"
-    replay:
-      from: "A"
-      to: "A"         # A → B → A の循環
-    actions: [...]
-```
-
-**自動修正**: 不可（構造的な問題）
-
-### E030: 未定義変数参照
-
-`do` または `then` で参照している変数が `variables` に定義されていない。
-
-```yaml
-# NG
+# E033: 秘密の変数を then で使っている
 variables:
-  email: "test@example.com"
-
+  password: {env: TEST_PASSWORD, secret: true}
 steps:
   - id: "ログイン"
     actions:
-      - do: "メールに「(email)」を入力"
-      - do: "パスワードに「(password)」を入力"  # password は未定義
-
-# OK
-variables:
-  email: "test@example.com"
-  password: "password123"
-
-steps:
-  - id: "ログイン"
-    actions:
-      - do: "メールに「(email)」を入力"
-      - do: "パスワードに「(password)」を入力"
+      - do: "パスワード「(password)」でログインする"   # OK（do では使える）
+      - then: "「(password)」が表示されていること"       # NG
 ```
 
-**検出パターン**: `(?<!\\)\(([a-zA-Z_][a-zA-Z0-9_]*)\)` で変数参照を検出
-
-**自動修正**: 不可（変数の値は特定できない）
-
-### E031: 無効な変数名
-
-変数名が命名規則に従っていない。
-
 ```yaml
-# NG
-variables:
-  123email: "test@example.com"     # 数字で始まる
-  my-var: "value"                  # ハイフン不可
-  "user name": "john"              # スペース不可
-
-# OK
-variables:
-  email: "test@example.com"
-  my_var: "value"
-  user_name: "john"
-  _private: "value"
-```
-
-**命名規則**: `^[a-zA-Z_][a-zA-Z0-9_]*$`
-
-**自動修正**: 不可（適切な名前は人間が決定すべき）
-
-### E032: 変数名重複
-
-同一シナリオ内で変数名が重複定義されている。
-
-```yaml
-# NG
-variables:
-  email: "test@example.com"
-  email: "another@example.com"     # 重複
-
-# OK
-variables:
-  email: "test@example.com"
-  email_alt: "another@example.com"
-```
-
-**自動修正**: 可（最初の定義を維持、後続を削除）
-
----
-
-## 警告（推奨）
-
-警告は実行可能だが推奨されない問題。
-
-### W001: 空 `actions`
-
-actions が空配列。
-
-```yaml
-# 警告
-steps:
-  - id: "空ステップ"
-    actions: []
-
-# OK
-steps:
-  - id: "ステップ"
-    actions:
-      - do: "アプリを起動"
-```
-
-**自動修正**: 不可（意図的な場合がある）
-
-### W002: `then` なし
-
-セクションに then（検証）がない。
-
-```yaml
-# 警告
-steps:
-  - id: "ログイン"
-    actions:
-      - do: "ボタンをタップ"
-      - do: "入力する"
-      # thenがない
-
-# OK
-steps:
-  - id: "ログイン"
-    actions:
-      - do: "ボタンをタップ"
-      - do: "入力する"
-      - then: "ログインできること"
-```
-
-**自動修正**: 不可（検証内容は人間が決定すべき）
-
-### W003: 連続 `then`
-
-do なしで then が連続。
-
-```yaml
-# 警告
-steps:
-  - id: "確認"
-    actions:
-      - then: "画面Aが表示されること"
-      - then: "画面Bも表示されること"  # 連続then
-
-# OK（通常は1つのthenにまとめる）
-steps:
-  - id: "確認"
-    actions:
-      - then: "画面Aと画面Bが表示されること"
-```
-
-**自動修正**: 不可（意図的な場合がある）
-
-### W004: `config` 未知キー
-
-config に未知のキーが含まれている。
-
-```yaml
-# 警告
+# E016 / E015
 config:
-  timeout: 60
-  unknown_key: "value"    # 未知のキー
-  strict: true
-
-# OK
-config:
-  timeout: 60
-  clear_data_before: true
-  stop_app_after: true
-  strict: true
+  on_failure: skip          # NG: stop_scenario / next_section / stop_all
+  interrupts:
+    allow: "Cookie の同意"   # NG: リストにする → ["Cookie の同意"]
 ```
-
-**既知のキー**: `timeout`, `clear_data_before`, `stop_app_after`, `strict`
-
-**自動修正**: 可（未知キーを削除）
-
-### W005: 未使用変数
-
-`variables` に定義されているが、どの `do` や `then` でも使用されていない。
 
 ```yaml
-# 警告
-variables:
-  email: "test@example.com"
-  password: "password123"      # 未使用
-  office: "東京本社"           # 未使用
-
-steps:
-  - id: "ログイン"
-    actions:
-      - do: "メールに「(email)」を入力"   # email のみ使用
-      - then: "ログインできること"
-
-# OK（すべての変数を使用）
-variables:
-  email: "test@example.com"
-
-steps:
-  - id: "ログイン"
-    actions:
-      - do: "メールに「(email)」を入力"
-      - then: "ログインできること"
+# W009: timeout は then にだけ有効
+- do: "保存する"
+  timeout: 10               # 無視される
+- then: "保存しました と表示されること"
+  timeout: 10               # OK
 ```
-
-**自動修正**: 不可（意図的な場合がある。将来使う予定の変数かもしれない）
-
-### W006: プレースホルダー変数
-
-変数の値が省略（undefined）または `null` に設定されており、実行時に対話式入力が必要。
-
-```yaml
-# 警告
-variables:
-  email: "test@example.com"
-  password:                         # 値省略 → 実行時にプロンプト
-  secret: null                      # null → 実行時にプロンプト
-  api_key:
-    prompt: "APIキーを入力してください"  # プロンプトのみ → 実行時に入力
-
-steps:
-  - id: "ログイン"
-    actions:
-      - do: "メールに「(email)」を入力"
-      - do: "パスワードに「(password)」を入力"
-
-# OK（値が設定済み - プロンプトなし）
-variables:
-  email: "test@example.com"
-  password: "password123"
-
-# OK（空文字列は有効な値 - プロンプトなし）
-variables:
-  email: "test@example.com"
-  password: ""
-```
-
-**プレースホルダー変数の判定**:
-
-| 形式 | プレースホルダー判定 |
-|------|---------------------|
-| `password:` | ✅ Yes（値省略） |
-| `password: null` | ✅ Yes（明示的null） |
-| `password: { prompt: "..." }` | ✅ Yes（valueなし） |
-| `password: { value:, prompt: "..." }` | ✅ Yes（value省略） |
-| `password: { value: null, prompt: "..." }` | ✅ Yes（value null） |
-| `password: ""` | ❌ No（空文字列は有効） |
-| `password: "value"` | ❌ No（値あり） |
-
-**注意**: これはエラーではなく警告。意図的に対話式入力を使用する場合に使われる。
-
-**CI/ヘッドレス環境での動作**:
-- プレースホルダー変数があるシナリオは CI 環境でスキップされる
-- スキップ時のメッセージ: `Skipped: variables [password, api_key] require interactive input`
-
-**自動修正**: 不可（意図的な設計。CI で実行したい場合は値を設定すること）
-
----
-
-## 検証順序
-
-1. YAML構文チェック
-2. 必須フィールド（E001-E006）
-3. 形式チェック（E010-E014）
-4. 参照整合性（E020-E023）
-5. 変数チェック（E030-E032）
-6. 警告チェック（W001-W006）
-
-## 終了条件
-
-| strict オプション | 終了条件 |
-|------------------|---------|
-| false（デフォルト） | エラーが1件以上 |
-| true | エラーまたは警告が1件以上 |

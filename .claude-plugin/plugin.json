@@ -1,6 +1,6 @@
 {
   "name": "uiai",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "自然言語で書いたシナリオで UI テストを実行する（Android / iOS シミュレータ / Web）。AI がスクリーンショットを見て 1 ステップずつ操作・判定し、失敗をその場で知らせる。画面録画からのシナリオ生成も。",
   "author": {
     "name": "Shota Iuchi"

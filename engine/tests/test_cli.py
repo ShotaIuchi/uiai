@@ -198,3 +198,62 @@ def test_no_more_devices_are_started_than_there_are_scenarios(parallel_env, tmp_
     code = cli.main(["run", files[0], "--parallel", "--results-dir", str(tmp_path / "r"), "--run-id", "p",
                      "--rejudge-model", "none"])
     assert code == 0 and len(made) == 1 and "android 1 台（A）" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------- AI backend
+
+
+def test_backend_api_needs_a_key(parallel_env, tmp_path, capsys, monkeypatch):
+    files, *_ = parallel_env
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    for extra in ([], ["--dry-run"]):
+        code = cli.main(["run", files[0], "--backend", "api", "--results-dir", str(tmp_path / "r"), *extra])
+        assert code == 2 and "ANTHROPIC_API_KEY" in capsys.readouterr().out
+    assert not (tmp_path / "r").exists()
+
+
+def test_an_unknown_backend_from_the_environment_is_refused(parallel_env, tmp_path, capsys, monkeypatch):
+    files, *_ = parallel_env
+    monkeypatch.setenv("UIAI_BACKEND", "nope")
+    code = cli.main(["run", files[0], "--results-dir", str(tmp_path / "r")])
+    assert code == 2 and "nope" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("args,env", [(["--backend", "api"], {}), ([], {"UIAI_BACKEND": "api"})])
+def test_backend_api_runs_on_api_sessions(parallel_env, tmp_path, capsys, monkeypatch, args, env):
+    import uiai.ai.api as api
+    import uiai.ai.claude_code as cc
+
+    files, *_ = parallel_env
+    made = []
+
+    class FakeApi(FakeSession):
+        def __init__(self, model, system):
+            made.append(model)
+
+    class NoClaudeCode:
+        def __init__(self, *a, **kw):
+            raise AssertionError("claude -p must not be started with --backend api")
+
+    monkeypatch.setattr(api, "ApiSession", FakeApi)
+    monkeypatch.setattr(cc, "ClaudeCodeSession", NoClaudeCode)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    code = cli.main(["run", files[0], "--results-dir", str(tmp_path / "r"), "--run-id", "p", *args])
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert made == ["haiku"] and "AI: Anthropic API" in out
+    (result,) = (tmp_path / "r" / "p").glob("*/result.json")
+    assert json.loads(result.read_text(encoding="utf-8"))["backend"] == "api"
+    assert "haiku（Anthropic API）" in (result.parent / "report.md").read_text(encoding="utf-8")
+
+
+def test_default_backend_is_claude_code(parallel_env, tmp_path, capsys, monkeypatch):
+    files, *_ = parallel_env
+    monkeypatch.delenv("UIAI_BACKEND", raising=False)
+    code = cli.main(["run", files[0], "--results-dir", str(tmp_path / "r"), "--run-id", "p"])
+    assert code == 0
+    (result,) = (tmp_path / "r" / "p").glob("*/result.json")
+    assert json.loads(result.read_text(encoding="utf-8"))["backend"] == "claude-code"
+    assert "Anthropic API" not in capsys.readouterr().out

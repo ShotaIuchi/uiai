@@ -91,6 +91,7 @@ class ScenarioResult:
     platform: str
     target: str
     model: str
+    backend: str = "claude-code"  # claude-code | api
     status: str = "pass"   # pass | pass_warn | fail | error | skipped
     error: str = ""
     steps: list[StepResult] = field(default_factory=list)
@@ -113,7 +114,8 @@ class ScenarioRunner:
                  ai_factory: Callable[[str], object], values: dict[str, str], out_dir: Path,
                  events: EventLog, redactor: Redactor, model: str,
                  printer: Callable[[str], None] = lambda s: print(s, flush=True), *,
-                 rejudge_factory: Callable[[str], object] | None = None, rejudge_model: str = ""):
+                 rejudge_factory: Callable[[str], object] | None = None, rejudge_model: str = "",
+                 backend: str = "claude-code"):
         self.sc, self.platform, self.app, self.drv = sc, platform, target, driver
         self.ai_factory, self.values, self.out = ai_factory, values, out_dir
         self.rejudge_factory, self.rejudge_model = rejudge_factory, rejudge_model
@@ -121,7 +123,7 @@ class ScenarioRunner:
         self.cfg = sc.config
         self.secrets = sc.secret_names
         self.ai = None
-        self.res = ScenarioResult(sc.name, str(sc.path), platform, target, model,
+        self.res = ScenarioResult(sc.name, str(sc.path), platform, target, model, backend,
                                   check_warnings=[str(w) for w in sc.warnings])
         self.steps = {it.index: StepResult(it.index, it.kind, it.section, it.origin, self.text(it), it.strict)
                       for it in sc.items}

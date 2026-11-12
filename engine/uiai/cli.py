@@ -28,6 +28,7 @@ from .redact import Redactor
 
 DEFAULT_MODEL = "haiku"
 DEFAULT_REJUDGE_MODEL = "sonnet"
+BACKENDS = ("claude-code", "api")
 DEFAULT_RESULTS = Path(".uiai") / "results"
 
 
@@ -87,6 +88,7 @@ def _devices(a: argparse.Namespace, jobs_per_platform: dict[str, int]) -> dict[s
 
 
 def cmd_run(a: argparse.Namespace) -> int:
+    from .ai.api import ApiSession
     from .ai.claude_code import ClaudeCodeSession
     from .drivers import DriverError, make_driver
     from .loop import STATUS_LABEL, ScenarioRunner
@@ -108,6 +110,13 @@ def cmd_run(a: argparse.Namespace) -> int:
         overrides[k] = v
     if not a.parallel and (len(a.serial or []) > 1 or len(a.udid or []) > 1):
         _out("複数の端末・シミュレータを使うには --parallel を付ける")
+        return 2
+    backend = a.backend or os.environ.get("UIAI_BACKEND") or "claude-code"
+    if backend not in BACKENDS:
+        _out(f"--backend（UIAI_BACKEND）は {' か '.join(BACKENDS)}: {backend}")
+        return 2
+    if backend == "api" and not os.environ.get("ANTHROPIC_API_KEY"):
+        _out("--backend api には環境変数 ANTHROPIC_API_KEY が要る")
         return 2
     if a.dry_run:
         return _dry_run(files, overrides, a)
@@ -134,6 +143,8 @@ def cmd_run(a: argparse.Namespace) -> int:
         events.listeners.append(DesktopNotifier())
     _out(f"run id: {run_dir.name}")
     _out(f"結果: {run_dir}")
+    if backend == "api":
+        _out("AI: Anthropic API を直接呼ぶ（--backend api）")
     events.emit("run_start", run_id=run_dir.name, results=str(run_dir), scenarios=[str(f) for f in files])
 
     # 1. Jobs: every scenario is loaded and its variables are resolved (and asked for) before anything runs.
@@ -185,18 +196,24 @@ def cmd_run(a: argparse.Namespace) -> int:
     stop_all = threading.Event()
     printer_lock = threading.Lock()
 
+    def session(model: str, system: str):
+        if backend == "api":
+            return ApiSession(model, system)
+        return ClaudeCodeSession(model, system)
+
     def run_job(job: Job, dev: Device) -> None:
         rj = a.rejudge_model
         rejudge = None if rj in ("", "none") or rj == job.model else (
-            lambda system, m=rj: ClaudeCodeSession(m, system))
+            lambda system, m=rj: session(m, system))
 
         def printer(s: str) -> None:
             with printer_lock:
                 print(f"[{dev.label}] {s}" if a.parallel else s, flush=True)
 
         runner = ScenarioRunner(job.sc, job.platform, target(job.sc.app, job.platform, job.file.parent), dev.driver,
-                                lambda system, m=job.model: ClaudeCodeSession(m, system), job.values, job.out,
-                                events, redactor, job.model, printer, rejudge_factory=rejudge, rejudge_model=rj)
+                                lambda system, m=job.model: session(m, system), job.values, job.out,
+                                events, redactor, job.model, printer, rejudge_factory=rejudge, rejudge_model=rj,
+                                backend=backend)
         res = runner.run()
         write_scenario(res, job.out, redactor)
         with lock:
@@ -398,6 +415,8 @@ def cmd_setup(a: argparse.Namespace) -> int:
     else:
         _out("NG   claude（Claude Code CLI）が見つからない: https://docs.claude.com/claude-code")
         ok = False
+    _out("OK   ANTHROPIC_API_KEY あり（--backend api で使える）" if os.environ.get("ANTHROPIC_API_KEY")
+         else "--   ANTHROPIC_API_KEY なし（--backend api を使う場合だけ要る）")
     adb = shutil.which("adb")
     _out(f"OK   adb: {adb}" if adb else "--   adb なし（Android を使う場合は Android SDK Platform-Tools を入れる）")
     if sys.platform == "darwin":
@@ -492,6 +511,10 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--model", help=f"使うモデル（既定: config.model、なければ {DEFAULT_MODEL}）")
     r.add_argument("--rejudge-model", default=DEFAULT_REJUDGE_MODEL,
                    help=f"then の不合格を確定する前に判定し直すモデル（既定: {DEFAULT_REJUDGE_MODEL}。none で無効）")
+    r.add_argument("--backend", choices=BACKENDS,
+                   help="AI の呼び出し方。claude-code（既定）: Claude Code（claude -p）経由。"
+                        "api: Anthropic API を直接呼ぶ（環境変数 ANTHROPIC_API_KEY が要る。従量課金。未検証）。"
+                        "環境変数 UIAI_BACKEND でも指定できる")
     r.add_argument("--serial", action="append",
                    help="Android 端末のシリアル（adb -s）。--parallel では繰り返して複数指定できる")
     r.add_argument("--udid", action="append",

@@ -34,7 +34,8 @@ def _meta_lines(res: ScenarioResult) -> list[str]:
         f"- ステップ: 合格 {c['pass']}・不合格 {c['fail']}・未実行 {c['not_run']}・警告 {c['warnings']}",
         f"- シナリオ: `{res.file}`",
         f"- 対象: {res.platform}（{res.target}）",
-        f"- モデル: {res.model}・AI 呼び出し {len(res.calls)} 回（会話 {sessions} 本）・1 回の入力は最大 {tokens} トークン",
+        f"- モデル: {res.model}{'（Anthropic API）' if res.backend == 'api' else ''}"
+        f"・AI 呼び出し {len(res.calls)} 回（会話 {sessions} 本）・1 回の入力は最大 {tokens} トークン",
         f"- 開始: {res.started_at}・所要 {res.seconds} 秒",
     ]
 

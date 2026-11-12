@@ -43,6 +43,6 @@ variables:
 
 [github-actions-web.yml](github-actions-web.yml)（Web のシナリオを Linux で実行する）。
 
-- `ref` は、タグかコミットの SHA で固定する（`main` のままだと、uiai の更新で挙動が変わる）。
+- `ref` は、コミットの SHA で固定する（`main` のままだと、uiai の更新で挙動が変わる）。uiai には版のタグ（`v0.4.0` など）をまだ付けていないため、SHA を使う。
 - `--run-id` を付けると、結果フォルダの名前が CI の実行と対応する。
 - Windows のランナーでは `bin\uiai.cmd` を使う（未検証）。

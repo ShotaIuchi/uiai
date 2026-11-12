@@ -13,11 +13,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: uiai を取得（版はタグかコミットで固定する）
+      - name: uiai を取得（版はコミットの SHA で固定する）
         uses: actions/checkout@v4
         with:
           repository: ShotaIuchi/uiai
-          ref: main            # 例: v0.2.0 のようなタグ、またはコミットの SHA
+          ref: main            # コミットの SHA（40 文字）に置き換えて固定する
           path: .uiai-plugin
 
       - uses: astral-sh/setup-uv@v6

@@ -1,0 +1,15 @@
+name: "Wikipedia（実サイト・AIループ計測用）"
+app: "https://ja.wikipedia.org/"
+
+steps:
+  - id: "検索"
+    actions:
+      - do: "サイトを開く"
+      - then: "Wikipedia のメインページが表示されていること"
+      - do: "検索欄に「東京タワー」と入力して検索する"
+      - then: "東京タワーの記事が表示されていること"
+
+  - id: "言語切替"
+    actions:
+      - do: "この記事の英語版に切り替える"
+      - then: "英語版の Tokyo Tower の記事が表示されていること"

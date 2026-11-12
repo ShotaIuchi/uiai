@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sample Tasks</title>
+<!--
+  AI ループ計測用のデモアプリ（外部通信なし・単一ファイル）。
+  わざと入れている「不確定要素」:
+    - 読み込み 1.5 秒後に出る Cookie 同意ダイアログ（シナリオには書かない割り込み）
+    - 3 秒で消えるトースト
+    - 保存時の確認ダイアログ
+    - 2 秒かかる検索（スピナー表示）
+-->
+<style>
+  :root { --bg:#f6f7f9; --fg:#1d2330; --card:#fff; --muted:#667085; --accent:#2f6fed; --border:#d9dee7; }
+  body.dark { --bg:#14171c; --fg:#e8ebf0; --card:#1f242c; --muted:#9aa3b2; --accent:#6b9bff; --border:#353c47; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; background:var(--bg); color:var(--fg); }
+  header { display:flex; align-items:center; gap:8px; padding:12px 24px; background:var(--card); border-bottom:1px solid var(--border); }
+  header .brand { font-weight:700; margin-right:auto; }
+  nav button { background:none; border:none; color:var(--fg); font-size:15px; padding:8px 12px; border-radius:6px; cursor:pointer; }
+  nav button.active { background:var(--accent); color:#fff; }
+  main { max-width:720px; margin:32px auto; padding:0 24px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:24px; }
+  .lbl { display:block; font-size:14px; color:var(--muted); margin:14px 0 6px; }
+  input[type=text], input[type=email], input[type=password] { width:100%; padding:10px 12px; font-size:15px; border:1px solid var(--border); border-radius:6px; background:var(--bg); color:var(--fg); }
+  .btn { margin-top:18px; padding:10px 20px; font-size:15px; border:none; border-radius:6px; background:var(--accent); color:#fff; cursor:pointer; white-space:nowrap; }
+  .btn.secondary { background:transparent; color:var(--fg); border:1px solid var(--border); }
+  .msg { font-size:14px; margin-top:12px; min-height:20px; }
+  .msg.error { color:#d92d20; }
+  .spinner { display:inline-block; width:18px; height:18px; border:3px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; vertical-align:middle; margin-right:8px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .row { display:flex; align-items:center; gap:10px; padding:12px 0; border-bottom:1px solid var(--border); cursor:pointer; }
+  .row.done span { text-decoration: line-through; color:var(--muted); }
+  .switch { position:relative; width:44px; height:24px; border-radius:12px; background:#c4cad4; border:none; cursor:pointer; flex:none; }
+  .switch::after { content:""; position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; transition:left .15s; }
+  .switch[aria-checked=true] { background:var(--accent); }
+  .switch[aria-checked=true]::after { left:23px; }
+  .setting { display:flex; align-items:center; justify-content:space-between; padding:14px 0; border-bottom:1px solid var(--border); }
+  .toast { position:fixed; left:50%; bottom:32px; transform:translateX(-50%); background:#323843; color:#fff; padding:12px 20px; border-radius:8px; opacity:0; transition:opacity .2s; pointer-events:none; }
+  .toast.show { opacity:1; }
+  .overlay { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; }
+  .dialog { background:var(--card); color:var(--fg); border-radius:12px; padding:24px; width:380px; }
+  .dialog .actions { display:flex; justify-content:flex-end; gap:8px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<header id="header" hidden>
+  <div class="brand">Sample Tasks</div>
+  <nav>
+    <button data-go="home">ホーム</button><button data-go="tasks">タスク</button><button data-go="search">検索</button><button data-go="settings">設定</button>
+  </nav>
+</header>
+<main>
+  <section id="login" class="card">
+    <h1>ログイン</h1>
+    <label class="lbl" for="email">メールアドレス</label><input id="email" type="email" autocomplete="off">
+    <label class="lbl" for="password">パスワード</label><input id="password" type="password">
+    <button class="btn" id="loginBtn">ログイン</button>
+    <div class="msg" id="loginMsg"></div>
+  </section>
+  <section id="home" class="card" hidden>
+    <h1>ようこそ、テストユーザーさん</h1>
+    <p>上のメニューからタスク・検索・設定を開けます。</p>
+  </section>
+  <section id="tasks" class="card" hidden>
+    <h1>タスク</h1>
+    <div style="display:flex; gap:8px"><input id="newTask" type="text" placeholder="新しいタスク"><button class="btn" id="addTask" style="margin-top:0">追加</button></div>
+    <div id="taskList"></div>
+  </section>
+  <section id="search" class="card" hidden>
+    <h1>検索</h1>
+    <div style="display:flex; gap:8px"><input id="q" type="text" placeholder="キーワード"><button class="btn" id="searchBtn" style="margin-top:0">検索</button></div>
+    <div id="results" style="margin-top:16px"></div>
+  </section>
+  <section id="settings" class="card" hidden>
+    <h1>設定</h1>
+    <div class="setting"><span>ダークモード</span><button class="switch" id="darkSwitch" role="switch" aria-checked="false" aria-label="ダークモード"></button></div>
+    <div class="setting"><span>通知メールを受け取る</span><button class="switch" id="mailSwitch" role="switch" aria-checked="true" aria-label="通知メール"></button></div>
+    <button class="btn" id="saveBtn">保存</button>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+<div class="overlay" id="cookie" hidden>
+  <div class="dialog"><h3>Cookie の使用について</h3><p>このサイトは利便性向上のため Cookie を使用します。</p>
+    <div class="actions"><button class="btn secondary" id="cookieMore">詳細</button><button class="btn" id="cookieOk">同意する</button></div></div>
+</div>
+<div class="overlay" id="confirm" hidden>
+  <div class="dialog"><h3>変更を保存しますか？</h3><p>ダークモードなどの設定を保存します。</p>
+    <div class="actions"><button class="btn secondary" id="confirmCancel">キャンセル</button><button class="btn" id="confirmOk">保存する</button></div></div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const screens = ["login", "home", "tasks", "search", "settings"];
+function show(name) {
+  screens.forEach((s) => ($(s).hidden = s !== name));
+  $("header").hidden = name === "login";
+  document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.go === name));
+}
+document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => show(b.dataset.go)));
+
+let toastTimer;
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 3000);
+}
+
+// 割り込み: 読み込み 1.5 秒後に Cookie 同意ダイアログ
+setTimeout(() => ($("cookie").hidden = false), 1500);
+$("cookieOk").onclick = () => ($("cookie").hidden = true);
+
+$("loginBtn").onclick = () => {
+  const ok = $("email").value === "test@example.com" && $("password").value === "password123";
+  $("loginMsg").className = "msg";
+  $("loginMsg").innerHTML = '<span class="spinner"></span>ログイン中…';
+  setTimeout(() => {
+    if (ok) { $("loginMsg").textContent = ""; show("home"); }
+    else { $("loginMsg").className = "msg error"; $("loginMsg").textContent = "メールアドレスまたはパスワードが違います"; }
+  }, 800);
+};
+
+const tasks = [{ t: "レポートを書く", done: false }, { t: "会議の準備", done: true }];
+function renderTasks() {
+  $("taskList").innerHTML = "";
+  tasks.forEach((k) => {
+    const row = document.createElement("label");
+    row.className = "row" + (k.done ? " done" : "");
+    row.innerHTML = '<input type="checkbox"><span></span>';
+    row.querySelector("input").checked = k.done;
+    row.querySelector("span").textContent = k.t;
+    row.querySelector("input").onchange = (e) => { k.done = e.target.checked; renderTasks(); };
+    $("taskList").appendChild(row);
+  });
+}
+renderTasks();
+function addTask() {
+  const v = $("newTask").value.trim();
+  if (!v) return;
+  tasks.push({ t: v, done: false });
+  $("newTask").value = "";
+  renderTasks();
+  toast("タスクを追加しました");
+}
+$("addTask").onclick = addTask;
+$("newTask").onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) addTask(); };
+
+const places = ["東京タワー", "東京駅", "東京スカイツリー", "大阪城", "京都タワー", "名古屋城", "東京国立博物館", "札幌時計台"];
+function doSearch() {
+  const q = $("q").value.trim();
+  $("results").innerHTML = '<span class="spinner"></span>検索中…';
+  setTimeout(() => {
+    const hits = places.filter((p) => q && p.includes(q));
+    $("results").innerHTML = "<p>" + hits.length + "件の結果</p>";
+    hits.forEach((h) => {
+      const d = document.createElement("div");
+      d.className = "row";
+      d.textContent = h;
+      $("results").appendChild(d);
+    });
+  }, 2000);
+}
+$("searchBtn").onclick = doSearch;
+$("q").onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) doSearch(); };
+
+for (const id of ["darkSwitch", "mailSwitch"]) {
+  const el = $(id);
+  el.onclick = () => el.setAttribute("aria-checked", String(el.getAttribute("aria-checked") !== "true"));
+}
+$("saveBtn").onclick = () => ($("confirm").hidden = false);
+$("confirmCancel").onclick = () => ($("confirm").hidden = true);
+$("confirmOk").onclick = () => {
+  $("confirm").hidden = true;
+  document.body.classList.toggle("dark", $("darkSwitch").getAttribute("aria-checked") === "true");
+  toast("設定を保存しました");
+};
+</script>
+</body>
+</html>

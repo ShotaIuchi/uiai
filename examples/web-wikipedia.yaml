@@ -1,5 +1,6 @@
-name: "Wikipedia（実サイト・AIループ計測用）"
-app: "https://ja.wikipedia.org/"
+name: "Wikipedia（実サイト）"
+app:
+  web: "https://ja.wikipedia.org/"
 
 steps:
   - id: "検索"

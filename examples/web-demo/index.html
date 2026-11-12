@@ -5,12 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sample Tasks</title>
 <!--
-  AI ループ計測用のデモアプリ（外部通信なし・単一ファイル）。
+  uiai の試験用デモアプリ（外部通信なし・単一ファイル）。
   わざと入れている「不確定要素」:
     - 読み込み 1.5 秒後に出る Cookie 同意ダイアログ（シナリオには書かない割り込み）
     - 3 秒で消えるトースト
     - 保存時の確認ダイアログ
     - 2 秒かかる検索（スピナー表示）
+  わざと入れる不具合（URL の ?bug=... で切り替え。examples/acceptance で使う）:
+    - ?bug=delayed-error : 設定の保存に成功した 1.5 秒後に、エラーの帯が出る
+    - ?bug=error-dialog  : ログイン直後に、エラーのダイアログが出る
 -->
 <style>
   :root { --bg:#f6f7f9; --fg:#1d2330; --card:#fff; --muted:#667085; --accent:#2f6fed; --border:#d9dee7; }
@@ -43,6 +46,7 @@
   .overlay { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; }
   .dialog { background:var(--card); color:var(--fg); border-radius:12px; padding:24px; width:380px; }
   .dialog .actions { display:flex; justify-content:flex-end; gap:8px; }
+  .errbar { position:fixed; left:0; right:0; top:0; background:#d92d20; color:#fff; padding:12px 24px; font-weight:700; }
   [hidden] { display:none !important; }
 </style>
 </head>
@@ -87,12 +91,19 @@
   <div class="dialog"><h3>Cookie の使用について</h3><p>このサイトは利便性向上のため Cookie を使用します。</p>
     <div class="actions"><button class="btn secondary" id="cookieMore">詳細</button><button class="btn" id="cookieOk">同意する</button></div></div>
 </div>
+<div class="overlay" id="errdlg" hidden>
+  <div class="dialog"><h3>エラー</h3><p>サーバーに接続できませんでした。（コード 503）</p>
+    <div class="actions"><button class="btn" id="errOk">OK</button></div></div>
+</div>
+<div class="errbar" id="errbar" hidden>保存に失敗しました（サーバーエラー）</div>
 <div class="overlay" id="confirm" hidden>
   <div class="dialog"><h3>変更を保存しますか？</h3><p>ダークモードなどの設定を保存します。</p>
     <div class="actions"><button class="btn secondary" id="confirmCancel">キャンセル</button><button class="btn" id="confirmOk">保存する</button></div></div>
 </div>
 <script>
 const $ = (id) => document.getElementById(id);
+const bug = new URLSearchParams(location.search).get("bug");
+$("errOk").onclick = () => ($("errdlg").hidden = true);
 const screens = ["login", "home", "tasks", "search", "settings"];
 function show(name) {
   screens.forEach((s) => ($(s).hidden = s !== name));
@@ -119,7 +130,11 @@ $("loginBtn").onclick = () => {
   $("loginMsg").className = "msg";
   $("loginMsg").innerHTML = '<span class="spinner"></span>ログイン中…';
   setTimeout(() => {
-    if (ok) { $("loginMsg").textContent = ""; show("home"); }
+    if (ok) {
+      $("loginMsg").textContent = "";
+      show("home");
+      if (bug === "error-dialog") $("errdlg").hidden = false;
+    }
     else { $("loginMsg").className = "msg error"; $("loginMsg").textContent = "メールアドレスまたはパスワードが違います"; }
   }, 800);
 };
@@ -177,6 +192,7 @@ $("confirmOk").onclick = () => {
   $("confirm").hidden = true;
   document.body.classList.toggle("dark", $("darkSwitch").getAttribute("aria-checked") === "true");
   toast("設定を保存しました");
+  if (bug === "delayed-error") setTimeout(() => ($("errbar").hidden = false), 1500);
 };
 </script>
 </body>

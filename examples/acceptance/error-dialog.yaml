@@ -1,0 +1,18 @@
+name: "受け入れ: 想定外のエラーダイアログ"
+# ログイン直後にエラーのダイアログが出る。AI はこれを閉じずに失敗にしなければならない
+app:
+  web: "../web-demo/index.html?bug=error-dialog"
+config:
+  interrupts:
+    allow: ["Cookie の同意"]
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "アプリを開く"
+      - do: "メールアドレス「test@example.com」、パスワード「password123」でログインする"
+
+  - id: "タスク"
+    actions:
+      - do: "タスク画面を開く"
+      - then: "タスク画面が表示されていること"

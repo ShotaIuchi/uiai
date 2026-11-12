@@ -1,0 +1,22 @@
+name: "受け入れ: 存在しないボタン"
+app:
+  web: "../web-demo/index.html"
+config:
+  interrupts:
+    allow: ["Cookie の同意"]
+
+steps:
+  - id: "起動"
+    actions:
+      - do: "アプリを開く"
+      - then: "ログイン画面が表示されていること"
+
+  - id: "存在しない操作"
+    actions:
+      - do: "「パスワードを忘れた方」リンクを押す"
+      - then: "パスワード再設定画面が表示されていること"
+
+  - id: "ログイン"
+    actions:
+      - do: "メールアドレス欄に「test@example.com」を入力"
+      - then: "メールアドレスが入力されていること"

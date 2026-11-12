@@ -1,0 +1,22 @@
+name: "受け入れ: 遅れて出るエラー"
+# 保存に成功した 1.5 秒後にエラーの帯が出る（否定形の then の観察で捉えられるか）
+app:
+  web: "../web-demo/index.html?bug=delayed-error"
+config:
+  interrupts:
+    allow: ["Cookie の同意"]
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "アプリを開く"
+      - do: "メールアドレス「test@example.com」、パスワード「password123」でログインする"
+      - then: "「ようこそ」と表示されていること"
+
+  - id: "設定"
+    actions:
+      - do: "設定画面を開く"
+      - do: "ダークモードをONにする"
+      - do: "設定を保存する"
+      - then: "「設定を保存しました」と表示されていること"
+      - then: "エラーが表示されていないこと"

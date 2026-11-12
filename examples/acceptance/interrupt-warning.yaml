@@ -1,0 +1,12 @@
+name: "受け入れ: 許可していない割り込み"
+# Cookie 同意ダイアログを許可リストに入れていない。閉じて続行するが、警告になる
+app:
+  web: "../web-demo/index.html"
+
+steps:
+  - id: "ログイン"
+    actions:
+      - do: "アプリを開く"
+      - then: "ログイン画面が表示されていること"
+      - do: "メールアドレス「test@example.com」、パスワード「password123」でログインする"
+      - then: "「ようこそ」と表示されていること"

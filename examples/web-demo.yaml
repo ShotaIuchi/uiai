@@ -1,7 +1,13 @@
-name: "Webデモ（AIループ速度計測用）"
+name: "Web 試験アプリ"
 # このファイルからの相対パス（file:// で開く）
-app: "web-demo/index.html"
-# 注意: Cookie 同意ダイアログはわざとシナリオに書いていない（割り込みとして AI に処理させる）
+app:
+  web: "web-demo/index.html"
+
+config:
+  interrupts:
+    # 読み込み 1.5 秒後に出る Cookie 同意ダイアログは、シナリオに書かずに AI に閉じさせる。
+    # 許可リストに入れているので警告にはならない（外すと「警告付き合格」になる）。
+    allow: ["Cookie の同意"]
 
 steps:
   - id: "起動"

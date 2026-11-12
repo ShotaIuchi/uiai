@@ -1,8 +1,11 @@
-name: "設定アプリ（AIループ速度計測用）"
-app: "com.android.settings"
-# 検索画面は別パッケージなので、前回の検索画面が残らないよう一緒に停止する
-reset_packages:
-  - "com.google.android.settings.intelligence"
+name: "Android 設定アプリ"
+app:
+  android: "com.android.settings"
+
+config:
+  # 検索画面は別パッケージなので、前回の検索画面が残らないよう一緒に停止する
+  reset:
+    - "com.google.android.settings.intelligence"
 
 steps:
   - id: "起動"

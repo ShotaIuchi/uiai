@@ -11,6 +11,32 @@ from PIL import Image
 
 from .base import Driver, DriverError
 
+# Key names the AI uses -> Playwright's. The AI sent "cmd+a" (unknown to Playwright) and "Control+a" (on a
+# Mac that moves to the line start instead of selecting all). Shortcut modifiers become ControlOrMeta
+# (Meta on macOS, Control elsewhere), which is what a test scenario means by "select all" etc.
+KEY_ALIASES = {
+    "cmd": "ControlOrMeta", "command": "ControlOrMeta", "meta": "ControlOrMeta", "ctrl": "ControlOrMeta",
+    "control": "ControlOrMeta", "alt": "Alt", "option": "Alt", "shift": "Shift",
+    "enter": "Enter", "return": "Enter", "esc": "Escape", "escape": "Escape", "tab": "Tab",
+    "backspace": "Backspace", "delete": "Delete", "del": "Delete", "space": " ",
+    "up": "ArrowUp", "down": "ArrowDown", "left": "ArrowLeft", "right": "ArrowRight",
+    "pageup": "PageUp", "pagedown": "PageDown", "home": "Home", "end": "End",
+}
+
+
+def playwright_key(key: str) -> str:
+    """'cmd+a' -> 'ControlOrMeta+a', 'enter' -> 'Enter', 'f5' -> 'F5'. Unknown names pass through."""
+    out = []
+    for part in [p.strip() for p in key.split("+")] if key.strip() != "+" else ["+"]:
+        low = part.lower()
+        if low in KEY_ALIASES:
+            out.append(KEY_ALIASES[low])
+        elif len(part) > 1 and low[0] == "f" and low[1:].isdigit():
+            out.append(part.upper())
+        else:
+            out.append(part)
+    return "+".join(out)
+
 
 class WebDriver(Driver):
     platform = "web"
@@ -85,7 +111,7 @@ class WebDriver(Driver):
             if t == "input":
                 p.keyboard.type(str(action.get("text", "")))
         elif t == "key":
-            p.keyboard.press(str(action.get("key", "Enter")))
+            p.keyboard.press(playwright_key(str(action.get("key") or "Enter")))
         elif t == "back":
             p.go_back(wait_until="domcontentloaded", timeout=15000)
         elif t == "scroll":

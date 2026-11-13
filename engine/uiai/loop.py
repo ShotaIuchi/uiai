@@ -47,7 +47,7 @@ ROTATE_ANYWHERE = 100_000
 HISTORY_STEPS = 12           # earlier steps carried over to a new conversation
 
 STATUS_LABEL = {"pass": "合格", "pass_warn": "警告付き合格", "fail": "不合格", "error": "実行エラー",
-                "skipped": "未実行（スキップ）", "not_run": "未実行"}
+                "skipped": "未実行（スキップ）", "not_run": "未実行", "skip": "スキップ（optional）"}
 
 
 class StopScenario(Exception):
@@ -66,7 +66,7 @@ class StepResult:
     origin: str
     text: str
     strict: bool = False
-    status: str = "not_run"     # pass | fail | not_run
+    status: str = "not_run"     # pass | fail | not_run | skip (an optional `do` that failed)
     reason: str = ""
     read: str | None = None
     warnings: list[str] = field(default_factory=list)
@@ -103,7 +103,7 @@ class ScenarioResult:
     stop_all: bool = False
 
     def counts(self) -> dict:
-        c = {"pass": 0, "fail": 0, "not_run": 0, "warnings": 0}
+        c = {"pass": 0, "fail": 0, "not_run": 0, "skip": 0, "warnings": 0}
         for s in self.steps:
             c[s.status] = c.get(s.status, 0) + 1
             c["warnings"] += len(s.warnings)
@@ -190,10 +190,10 @@ class ScenarioRunner:
         self.session_section = section_index
 
     def history_text(self) -> str:
-        done = [s for s in self.res.steps if s.status in ("pass", "fail")][-HISTORY_STEPS:]
+        done = [s for s in self.res.steps if s.status in ("pass", "fail", "skip")][-HISTORY_STEPS:]
         if not done:
             return ""
-        label = {"pass": "done", "fail": "FAILED"}
+        label = {"pass": "done", "fail": "FAILED", "skip": "FAILED (optional: skipped, the scenario went on)"}
         lines = [f"- [{s.section}] {s.kind}: {s.text} -> {label[s.status] if s.kind == 'do' else s.status}"
                  for s in done]
         return ("Earlier steps of this scenario (from a previous conversation; their screenshots are not "
@@ -432,8 +432,10 @@ class ScenarioRunner:
         n_do = sum(1 for x in self.items if x.kind == "do")
         do_no = sum(1 for x in self.items if x.kind == "do" and x.index <= it.index)
         actions, step_actions, feedback, last, went_back, stale_skips = 0, 0, "", None, False, 0
+        checked = not it.optional  # an optional `do` is done only after the AI saw what its last action led to
+        limit = self.cfg.max_actions
         while True:
-            if actions >= self.cfg.max_actions:
+            if actions >= limit:
                 return False, f"操作回数の上限（{self.cfg.max_actions} 回）に達した"
             obs = self.observe()
             undecided = [t for t in pending if t.final is None]
@@ -445,7 +447,8 @@ class ScenarioRunner:
                     fb += "; the screen did not change"
             else:
                 fb = ""
-            a = Ask(section=it.section, do=text, do_strict=it.strict, step_no=do_no, step_total=n_do,
+            a = Ask(section=it.section, do=text, do_strict=it.strict, do_optional=it.optional,
+                    step_no=do_no, step_total=n_do,
                     thens=[(t.text, t.item.strict) for t in undecided], attempt=actions,
                     recheck=any(t.started for t in undecided), feedback=fb)
             res, rec = self.ask(a, obs, "do" if not undecided or not any(t.started for t in undecided) else "recheck",
@@ -501,6 +504,14 @@ class ScenarioRunner:
                 feedback += " (the action failed)"
                 continue
             if res["done"] and res["purpose"] == "step":
+                if not checked and t not in (None, "none"):
+                    # A message such as "already registered" often comes after the last action: the optional
+                    # `do` handles it (closes it and fails, so it is skipped), not the next `do` (in 1 of 3 runs
+                    # that one failed, taking the closed message for a reason not to go on).
+                    checked = True
+                    limit = max(limit, actions + 2)  # room to close what it caused, and to look again
+                    feedback += "; [optional] check the result on this screen before the `do` counts as done"
+                    continue
                 break
         if went_back and not BACK_WORDS.search(text):
             self.warn(step, "戻る操作を挟んだ（`do` は戻ることを指示していない。遠回りの可能性）")
@@ -526,6 +537,15 @@ class ScenarioRunner:
                                     + (f"（残り {len(rest)} ステップは未実行）" if rest else "")))
         self.res.stop_all = self.cfg.on_failure == "stop_all"
 
+    def skip_do(self, it: Item, reason: str) -> None:
+        """An optional `do` failed: record it as skipped and go on. Its `then`s are judged as usual."""
+        step = self.steps[it.index]
+        step.status, step.reason = "skip", reason
+        img = self.res.calls[step.calls[-1] - 1]["image"] if step.calls else None
+        self.ev("skip", section=it.section, step=it.index + 1, kind="do", text=step.text, reason=reason,
+                image=str(self.out / img) if img else None)
+        self.print(self.redact.text(f"  ⏭ do スキップ（optional）[{it.section}] 「{step.text}」: {reason}"))
+
     def run(self) -> ScenarioResult:
         self.t0 = time.time()
         self.res.started_at = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -536,7 +556,8 @@ class ScenarioRunner:
             self.drv.type_delay = self.type_delay / 1000  # the device may run several scenarios: set it each time
             self.drv.reset(self.app, self.cfg)
             self.system = system_prompt(self.drv.description, self.drv.iw, self.drv.ih,
-                                        self.cfg.interrupts.allow, sorted(self.secrets))
+                                        self.cfg.interrupts.allow, sorted(self.secrets),
+                                        optional=any(it.optional for it in self.items))
             self.open_session()
             sections = self.sc.sections
             stop = False
@@ -572,6 +593,10 @@ class ScenarioRunner:
                     else:
                         stop_now = False
                     pending = [t for t in pending if t.final is None]
+                    if not ok and it.optional and not stop_now:  # the scenario's time limit still stops it
+                        self.skip_do(it, reason)
+                        self.drv.wait_after_action(it.wait)
+                        continue
                     if not ok:
                         if stop_now or self.cfg.on_failure != "next_section":
                             rest = [x for x in self.items if x.index > it.index]

@@ -95,6 +95,7 @@ class Item:
     section: str            # section that runs it
     origin: str             # section where it is written (differs for replayed `do`)
     strict: bool = False
+    optional: bool = False  # do only: if it fails, it is recorded as skipped and the scenario goes on
     wait: float = 0.0
     timeout: float = DEFAULT_THEN_TIMEOUT   # then only
     observe: float = DEFAULT_OBSERVE        # then only
@@ -322,6 +323,11 @@ def check_data(data: Any, duplicates: list[tuple[Any, int]] | None = None) -> li
                 err("E013", "`wait` は数値（秒）", aw)
             if "strict" in a and not isinstance(a["strict"], bool):
                 err("E014", "`strict` は true/false", aw)
+            if "optional" in a:
+                if not isinstance(a["optional"], bool):
+                    err("E014", "`optional` は true/false", aw)
+                elif kind != "do":
+                    warn("W010", "`optional` は `do` にだけ有効（`then` では無視する）", aw)
             for k in ("timeout", "observe"):
                 if k in a:
                     if kind != "then":
@@ -463,7 +469,8 @@ def _expand(steps: list[dict], cfg: Config) -> list[Section]:
 
     def make(a: dict, kind: str, section: str, origin: str) -> Item:
         strict = a.get("strict", cfg.strict)
-        it = Item(kind, a[kind], section, origin, strict=bool(strict), wait=float(a.get("wait") or 0))
+        it = Item(kind, a[kind], section, origin, strict=bool(strict), wait=float(a.get("wait") or 0),
+                  optional=kind == "do" and a.get("optional") is True)
         if kind == "then":
             it.timeout = float(a.get("timeout", cfg.then_timeout))
             it.observe = float(a.get("observe", DEFAULT_OBSERVE))

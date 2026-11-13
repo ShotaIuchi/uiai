@@ -1,7 +1,7 @@
 """Event stream (events.jsonl): the source of real-time failure notifications.
 
 Event types:
-  run_start, scenario_start, fail, warning, error, scenario_end, run_end
+  run_start, scenario_start, fail, skip (an optional `do` that failed), warning, error, scenario_end, run_end
 Only `fail` and `error` are notified one by one; `warning` and not-run steps are summarised
 at the end (design doc 9).
 """
@@ -70,6 +70,9 @@ def describe(ev: dict) -> str:
         if ev.get("not_run"):
             line += f"（残り {ev['not_run']} ステップは未実行）"
         return line
+    if ev["type"] == "skip":
+        return (f"[uiai] スキップ（optional）: {where} / {ev.get('section', '')} / 「{ev.get('text', '')}」: "
+                f"{ev.get('reason', '')}")
     if ev["type"] == "warning":
         return f"[uiai] 警告: {where} / {ev.get('section', '')} / 「{ev.get('text', '')}」: {ev.get('message', '')}"
     if ev["type"] == "scenario_end":

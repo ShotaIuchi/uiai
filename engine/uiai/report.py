@@ -10,7 +10,7 @@ from pathlib import Path
 from .loop import STATUS_LABEL, ScenarioResult
 from .redact import Redactor
 
-ICON = {"pass": "✅", "pass_warn": "⚠️", "fail": "❌", "error": "💥", "skipped": "⏭️", "not_run": "—"}
+ICON = {"pass": "✅", "pass_warn": "⚠️", "fail": "❌", "error": "💥", "skipped": "⏭️", "not_run": "—", "skip": "⏭️"}
 
 
 def _md(s: object) -> str:
@@ -39,7 +39,8 @@ def _meta_lines(res: ScenarioResult) -> list[str]:
     sessions = len({x.get("session", 1) for x in res.calls})
     return [
         f"- 結果: {ICON[res.status]} {STATUS_LABEL[res.status]}" + (f" — {res.error}" if res.error else ""),
-        f"- ステップ: 合格 {c['pass']}・不合格 {c['fail']}・未実行 {c['not_run']}・警告 {c['warnings']}",
+        f"- ステップ: 合格 {c['pass']}・不合格 {c['fail']}・未実行 {c['not_run']}"
+        + (f"・スキップ（optional） {c['skip']}" if c["skip"] else "") + f"・警告 {c['warnings']}",
         f"- シナリオ: `{res.file}`",
         f"- 対象: {res.platform}（{res.target}）",
         f"- モデル: {res.model}{_backend_note(res)}"
@@ -92,7 +93,7 @@ def _report_html(res: ScenarioResult) -> str:
     meta = "".join(f"<li>{e(m[2:])}</li>" for m in _meta_lines(res))
     rows = []
     for s in res.steps:
-        cls = "warn" if s.status == "pass" and s.warnings else s.status
+        cls = "warn" if (s.status == "pass" and s.warnings) or s.status == "skip" else s.status
         why = e(s.reason) + (f"<br><span class=small>読み取り: <code>{e(s.read)}</code></span>" if s.read else "")
         extra = "<br>".join([f"<span class=warn>⚠️ {e(w)}</span>" for w in s.warnings] + [e(n) for n in s.notes])
         calls = " ".join(f'<a href="#c{n}">#{n}</a>' for n in s.calls)
@@ -165,6 +166,10 @@ def write_summary(results: list[tuple[ScenarioResult, Path]], run_dir: Path, exi
         lines += ["", "## 失敗", ""]
         lines += [f"- {r.name} @ {r.platform} / {s.section} / {s.kind}「{s.text}」: {s.reason}"
                   + (f"（読み取り: {s.read}）" if s.read else "") for r, s in fails]
+    skips = [(r, s) for r, _ in results for s in r.steps if s.status == "skip"]
+    if skips:
+        lines += ["", "## スキップ（optional の do が失敗した）", ""]
+        lines += [f"- {r.name} @ {r.platform} / {s.section} / do「{s.text}」: {s.reason}" for r, s in skips]
     errs = [r for r, _ in results if r.status == "error"]
     if errs:
         lines += ["", "## 実行エラー", ""] + [f"- {r.name} @ {r.platform}: {r.error}" for r in errs]

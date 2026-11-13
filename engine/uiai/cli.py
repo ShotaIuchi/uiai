@@ -583,7 +583,7 @@ def cmd_watch(a: argparse.Namespace) -> int:
             except json.JSONDecodeError:
                 continue
             t = ev.get("type")
-            if t in ("fail", "error") or (a.all and t in ("warning", "scenario_end")):
+            if t in ("fail", "error") or (a.all and t in ("warning", "skip", "scenario_end")):
                 _out(describe(ev))
             elif t == "run_end":
                 _out(describe(ev))
@@ -667,7 +667,7 @@ def build_parser() -> argparse.ArgumentParser:
     w = sub.add_parser("watch", help="実行中の失敗を 1 行ずつ表示する（Monitor 用）")
     w.add_argument("--run", default="latest", help="run id（既定: latest）")
     w.add_argument("--results-dir", default=str(DEFAULT_RESULTS))
-    w.add_argument("--all", action="store_true", help="警告とシナリオごとの結果も表示する")
+    w.add_argument("--all", action="store_true", help="警告・スキップ（optional）とシナリオごとの結果も表示する")
     w.add_argument("--wait", type=float, default=60, help="実行が始まるのを待つ秒数")
     w.add_argument("--timeout", type=float, default=3 * 3600, help="この秒数で見張りをやめる（実行は止めない）")
     w.add_argument("--skip", type=int, default=0, help="先頭のイベントをこの数だけ読み飛ばす（見張りの再開用）")

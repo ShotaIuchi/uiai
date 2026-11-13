@@ -41,7 +41,7 @@ Rules:
   that neither the `do` nor the `then`s mention, do NOT dismiss it: set "error_shown": true and action "fail"
   with the message in "reason".
 - Allowed dialogs (may be dismissed silently): {allow}
-{secrets}
+{secrets}{optional}
 Judging `then`:
 - "verify" has one entry per given `then`, in the same order (empty list if none). Judge only from the current
   screenshot; pass=false if it is not satisfied (the runner may re-check on a fresh screen).
@@ -99,14 +99,27 @@ def parse_judge(text: str) -> dict | None:
     return None
 
 
-def system_prompt(desc: str, iw: int, ih: int, allow: list[str], secrets: list[str] | None = None) -> str:
+# Only in scenarios that have an optional `do`: the prompt of the others stays as it was.
+OPTIONAL_RULE = """- [optional] `do`: the scenario goes on even if it fails (e.g. registering data that may already exist).
+  After its last action you are shown the resulting screen: answer "none" with "done": true if it worked.
+  If it cannot be done, or a message or error about it appears (e.g. "already registered"), first close that
+  message or dialog if it can be closed (purpose "step", "done": false), then answer "fail" with the reason;
+  do not set "error_shown" for it. If the `do` is already satisfied on the screen, answer "none".
+- A message or dialog left by an earlier [optional] `do` is no error of a later `do` and does not block it:
+  close it and carry on with the later `do`.
+"""
+
+
+def system_prompt(desc: str, iw: int, ih: int, allow: list[str], secrets: list[str] | None = None,
+                  optional: bool = False) -> str:
     allow_s = json.dumps(allow, ensure_ascii=False) if allow else "(none)"
     secrets_s = ""
     if secrets:  # only when the scenario has secret variables (an example here gets copied literally)
         names = ", ".join(f"({n})" for n in sorted(secrets))
         secrets_s = (f"- Secret placeholders: {names}. When a `do` asks to type one, put the placeholder itself in\n"
                      f"  \"text\" exactly as written; the runner substitutes the real value.\n")
-    return SYSTEM.format(desc=desc, iw=iw, ih=ih, allow=allow_s, secrets=secrets_s)
+    return SYSTEM.format(desc=desc, iw=iw, ih=ih, allow=allow_s, secrets=secrets_s,
+                         optional=OPTIONAL_RULE if optional else "")
 
 
 @dataclass
@@ -114,6 +127,7 @@ class Ask:
     section: str
     do: str | None              # None: only judge `then`s
     do_strict: bool = False
+    do_optional: bool = False
     step_no: int = 0
     step_total: int = 0
     thens: list[tuple[str, bool]] | None = None   # (text, strict)
@@ -127,7 +141,7 @@ def build_message(a: Ask) -> str:
     if a.do is None:
         parts.append("do: (none - only judge the `then`s; action: none)")
     else:
-        parts.append(f"do: {a.do}" + (" [strict]" if a.do_strict else ""))
+        parts.append(f"do: {a.do}" + (" [strict]" if a.do_strict else "") + (" [optional]" if a.do_optional else ""))
     if a.attempt:
         parts.append(f"(continuing this `do`, action {a.attempt + 1})")
     if a.feedback:

@@ -1,7 +1,7 @@
 ---
 name: test
 description: 自然言語で書いたシナリオ YAML で、Android・iOS（Mac のシミュレータか、USB でつないだ iPhone）・Web の UI テストを実行する。AI がスクリーンショットを見て 1 ステップずつ操作・判定する。実行はバックグラウンドで進め、失敗はその場でチャットに知らせ、終わったら結果をまとめる。「UI テストを実行して」「このシナリオを走らせて」などで使う。
-argument-hint: "<シナリオかフォルダ>... [--platform android|ios|web|all] [--model haiku] [--rejudge-model sonnet|none] [--var NAME=VALUE] [--serial <adb シリアル>] [--udid <シミュレータか iPhone>] [--ios-team <チーム ID>] [--parallel] [--headed]"
+argument-hint: "<シナリオかフォルダ>... [--platform android|ios|web|all] [--model haiku] [--rejudge-model sonnet|none] [--type-delay <ミリ秒>] [--var NAME=VALUE] [--serial <adb シリアル>] [--udid <シミュレータか iPhone>] [--ios-team <チーム ID>] [--parallel] [--headed]"
 allowed-tools: Bash(uiai *), Bash(date *)
 ---
 
@@ -21,6 +21,7 @@ allowed-tools: Bash(uiai *), Bash(date *)
 | `--platform android\|ios\|web\|all` | 実行するプラットフォーム。省略時は `app` と接続中の対象から決まる |
 | `--model <名前>` | AI のモデル（既定 haiku） |
 | `--rejudge-model <名前>` | `then` の不合格を確定する前に判定し直すモデル（既定 sonnet。`none` で無効） |
+| `--type-delay <ミリ秒>` | 文字入力の 1 文字ごとの間隔（シナリオの `config.type_delay` より優先。既定 0 = 最速）。Android の日本語など ASCII 以外は一度に貼り付ける |
 | `--var NAME=VALUE` | 変数の値（繰り返し可） |
 | `--serial <シリアル>` | Android 端末（複数接続しているとき。`--parallel` では繰り返して複数指定できる） |
 | `--udid <UDID>` | iOS シミュレータか、USB でつないだ iPhone（複数あるとき。`--parallel` では繰り返して複数指定できる） |

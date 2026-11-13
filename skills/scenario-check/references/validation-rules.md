@@ -21,7 +21,7 @@
 | E012 | 1 つの行に `do` と `then` がある | 2 行に分ける |
 | E013 | `wait` が数値でない | 秒数（数値）にする |
 | E014 | `strict` や `config` の真偽値が true/false でない | `true` / `false` にする |
-| E015 | `config` の値の型・範囲が不正（正の数でない、リストでないなど）。`then` の `timeout`・`observe` が 0 以上の数でない | 正しい型・値にする |
+| E015 | `config` の値の型・範囲が不正（正の数でない、リストでないなど）。`config.type_delay`、`then` の `timeout`・`observe` が 0 以上の数でない | 正しい型・値にする |
 | E016 | `config.on_failure`・`config.interrupts.mode` が決められた値でない | `on_failure`: stop_scenario / next_section / stop_all。`interrupts.mode`: allow / report / fail |
 | E020 | `replay` がマッピングでない、`replay.from` のセクションがない | 存在する `id` を書く |
 | E021 | `replay.to` のセクションがない | 存在する `id` を書く |

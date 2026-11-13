@@ -190,12 +190,14 @@ config:
     mode: report            # 想定外のダイアログ: allow / report / fail
     allow: ["Cookie の同意"] # 黙って閉じてよいダイアログ
   model: haiku              # 使うモデル（--model が優先）
+  type_delay: 0             # 文字入力の 1 文字ごとの間隔（ミリ秒、既定 0 = 最速。--type-delay が優先）
 ```
 
 | キー | 説明 |
 |---|---|
 | `timeout` | AI 方式は 1 ステップ 3〜6 秒かかる。「`do` の数 × 10 秒」より短いと `uiai check` が警告する |
 | `on_failure` | `stop_scenario`（既定）: 残りを未実行にして次のシナリオへ。`next_section`: 次のセクションへ進む（各セクションの前にアプリを初期化する。セクションが互いに独立しているとき用）。`stop_all`: 実行全体を止める |
+| `type_delay` | 1 文字ずつ打つときの、キーとキーの間隔の最小値（ミリ秒）。最初のキーも、直前の操作（入力欄のタップなど）から同じだけ空ける。速い入力で文字が落ちるアプリや、入力ごとに反応する画面を試すとき用。1 キーを送るのに時間がかかる環境では、指定より間が空く（Android は 1 キー約 0.2 秒）。Android: ASCII を 1 キーずつ送る。日本語など ASCII 以外は、間隔に関係なく一度に貼り付ける。iPhone: WebDriverAgent に 1 秒あたりの文字数（整数）で渡す（例: 100 → 10 文字/秒、300 → 3 文字/秒。1 秒を超えると 1 文字ずつ送る）。iOS シミュレータ: AXe を 1 文字ずつ呼ぶ。Web: Playwright の `delay` |
 | `interrupts.mode` | `report`（既定）: 閉じて続け、警告にする。`allow`: 閉じて続け、記録だけ残す。`fail`: 閉じずに `do` を失敗にする。`allow` のリストに当たるダイアログはどのモードでも警告にしない |
 
 ## 結果
@@ -261,4 +263,4 @@ config:
 | `app`（文字列） | URL・`.html` なら Web として扱うようになった |
 | `app.web` | 最初に開く URL。`.html` への相対パスも書ける |
 | `config.timeout` | 意味は同じ。既定は 600 秒 |
-| 追加 | `variables` の `env`・`secret`、`then` の `timeout`・`observe`、`config` の `then_timeout`・`max_actions`・`interrupts`・`on_failure`・`reset`・`model` |
+| 追加 | `variables` の `env`・`secret`、`then` の `timeout`・`observe`、`config` の `then_timeout`・`max_actions`・`interrupts`・`on_failure`・`reset`・`model`・`type_delay` |

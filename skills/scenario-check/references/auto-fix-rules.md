@@ -151,7 +151,7 @@ config 内の未知のキーを直す。
 **修正ルール**:
 1. 既知のキーの綴り誤りと明らかに分かるもの（`then_timout` → `then_timeout` など）は、キー名を直す
 2. それ以外は削除する（エンジンは無視しているため、動きは変わらない）
-3. 既知のキー: `timeout`, `then_timeout`, `max_actions`, `strict`, `clear_data_before`, `stop_app_after`, `reset`, `on_failure`, `interrupts`, `model`（`verify` は W007）
+3. 既知のキー: `timeout`, `then_timeout`, `max_actions`, `strict`, `clear_data_before`, `stop_app_after`, `reset`, `on_failure`, `interrupts`, `model`, `type_delay`（`verify` は W007）
 
 **例**:
 

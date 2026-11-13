@@ -32,7 +32,7 @@ uiai watch --run latest                # 実行中の失敗を 1 行ずつ表示
 
 ```
 uiai run <シナリオかフォルダ>... [--platform android|ios|web|all] [--model haiku] [--rejudge-model sonnet|none]
-         [--backend claude-code|api]
+         [--backend claude-code|api] [--type-delay MS]
          [--serial <adb シリアル>]... [--udid <シミュレータか iPhone>]... [--ios-team ID] [--parallel] [--browsers N]
          [--browser-path <chromium>] [--headed] [--var NAME=VALUE]... [--webhook URL] [--notify]
          [--run-id ID] [--results-dir DIR] [--fail-on-warning] [--dry-run]
@@ -43,6 +43,7 @@ uiai run <シナリオかフォルダ>... [--platform android|ios|web|all] [--mo
 - iPhone は WebDriverAgent で操作する。iPhone で動いていなければ、`~/Library/Caches/uiai/wda` に版を固定して取得し、Xcode にサインインしたチームで署名してビルドし（`xcodebuild build-for-testing`。初回は数分）、`xcodebuild test-without-building` で起動して、終わったら止める。チームが複数あれば `--ios-team`（または `UIAI_IOS_TEAM`）で選ぶ（有料と無料のチームがあれば有料を使う）。Mac から iPhone のポートへは usbmuxd で直接つなぐ（iproxy・Appium は要らない）
 - 値のない変数は、`--var`、`env:` の環境変数、対話入力の順に解決する。どれもなければ、そのシナリオは実行しない。実行の前に、全シナリオの分をまとめて解決する
 - `then` が待ち時間を過ぎても不合格のときは、確定する前に `--rejudge-model`（既定 sonnet）が同じ画像で判定し直す。sonnet が合格とすれば合格にするが、判定が分かれたことを警告に残す。`none` で無効
+- `--type-delay MS` で、文字入力の 1 文字ごとの間隔を指定する（ミリ秒。シナリオの `config.type_delay` より優先。既定 0 = 最速）。最初のキーの前も同じだけ待つ。Android は ASCII を uiautomator2 で 1 キーずつ（キーコードと Shift。US 配列）送り、ASCII 以外は間隔に関係なく一度に貼り付ける。iPhone は WebDriverAgent の `frequency`（1 秒あたりの文字数）、iOS シミュレータは 1 文字ずつの `axe type`、Web は Playwright の `delay`
 - `--backend api`（または環境変数 `UIAI_BACKEND=api`）で、Claude Code を通さずに Anthropic API を直接呼ぶ。`ANTHROPIC_API_KEY` が要り、従量課金になる。画像は最新の 2 枚だけを送るので、入力が伸びにくい。1 回の呼び出しは、やり直しを含めて 120 秒まで。実際の API では未検証（偽の応答での単体テストまで）
 - `--parallel` は端末ごとに並列で実行する。Android は接続中の全端末、iOS は USB でつないだ全 iPhone と起動中の全シミュレータ（`--serial`・`--udid` を繰り返して絞れる）、Web は `--browsers` 個（既定 2）のブラウザ。シナリオは空いた端末から順に割り当てる（同じシナリオを全端末で回すのではない）。表示の各行には端末名が付く
 - `--webhook`（または環境変数 `UIAI_WEBHOOK_URL`）を指定すると、失敗を `{"text": ...}` で POST する
@@ -100,7 +101,7 @@ cd engine && uv run --no-project --with pyyaml==6.0.3 --with pillow==13.0.0 --wi
 | `uiai/ai/protocol.py` | AI への指示と応答の読み取り |
 | `uiai/ai/claude_code.py` | `claude -p` の持続セッション（stream-json で画像とテキストを送る。ツール・MCP・ユーザー設定は無効にする） |
 | `uiai/ai/api.py` | Anthropic API を直接呼ぶ（`--backend api`）。標準ライブラリだけで呼び、画像は最新 2 枚だけ送り、プロンプトキャッシュを使う。実際の API では未検証 |
-| `uiai/drivers/` | Android（adb。ASCII 以外の文字は uiautomator2 でクリップボードから貼り付ける）・iOS（`xcrun simctl` と AXe）・Web（Playwright） |
+| `uiai/drivers/` | Android（adb。ASCII 以外の文字は uiautomator2 でクリップボードから貼り付け、入力の間隔を指定したときの ASCII は uiautomator2 で 1 キーずつ送る）・iOS（`xcrun simctl` と AXe）・Web（Playwright） |
 | `uiai/events.py` / `notify.py` / `desktop.py` | イベント出力、Webhook、デスクトップ通知 |
 | `uiai/redact.py` | 秘密の値を伏せる |
 | `uiai/report.py` | `result.json`・`report.md`・`report.html`・`summary.md` |

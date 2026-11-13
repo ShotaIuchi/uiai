@@ -18,7 +18,7 @@ allowed-tools: Bash(uiai *), Bash(date *)
 
 | オプション | 意味 |
 |---|---|
-| `--platform android\|ios\|web\|all` | 実行するプラットフォーム。省略時は `app` と接続中の対象から決まる |
+| `--platform android\|ios\|web\|all` | 実行するプラットフォーム。省略時は `app` と接続中の対象から決まる（セクションの `on` に書いたプラットフォームは候補から外す）。`on` のあるセクションは、`on` のデバイスで実行する |
 | `--model <名前>` | AI のモデル（既定 haiku） |
 | `--rejudge-model <名前>` | `then` の不合格を確定する前に判定し直すモデル（既定 sonnet。`none` で無効） |
 | `--type-delay <ミリ秒>` | 文字入力の 1 文字ごとの間隔（シナリオの `config.type_delay` より優先。既定 0 = 最速）。Android の日本語など ASCII 以外は一度に貼り付ける |
@@ -26,7 +26,7 @@ allowed-tools: Bash(uiai *), Bash(date *)
 | `--serial <シリアル>` | Android 端末（複数接続しているとき。`--parallel` では繰り返して複数指定できる） |
 | `--udid <UDID>` | iOS シミュレータか、USB でつないだ iPhone（複数あるとき。`--parallel` では繰り返して複数指定できる） |
 | `--ios-team <チーム ID>` | iPhone で使う WebDriverAgent の署名チーム（Xcode にサインインしたチームが複数あるとき） |
-| `--parallel` | 端末ごとに並列で実行する（Android は接続中の全端末、iOS は USB でつないだ全 iPhone と起動中の全シミュレータ、Web は `--browsers` 個のブラウザ。既定 2）。シナリオは空いた端末に割り当てる |
+| `--parallel` | 端末ごとに並列で実行する（Android は接続中の全端末、iOS は USB でつないだ全 iPhone と起動中の全シミュレータ、Web は `--browsers` 個のブラウザ。既定 2）。シナリオは空いた端末に割り当てる（`on` のあるシナリオは、並列の分が終わったあとに 1 件ずつ） |
 | `--headed` | Web のブラウザを表示する |
 | `--fail-on-warning` | 警告付き合格も失敗として扱う |
 | `--webhook <URL>` | 失敗を Slack などにも送る（環境変数 `UIAI_WEBHOOK_URL` でも可） |

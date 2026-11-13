@@ -45,7 +45,9 @@ uiai run <シナリオかフォルダ>... [--platform android|ios|web|all] [--mo
 - `then` が待ち時間を過ぎても不合格のときは、確定する前に `--rejudge-model`（既定 sonnet）が同じ画像で判定し直す。sonnet が合格とすれば合格にするが、判定が分かれたことを警告に残す。`none` で無効
 - `--type-delay MS` で、文字入力の 1 文字ごとの間隔を指定する（ミリ秒。シナリオの `config.type_delay` より優先。既定 0 = 最速）。最初のキーの前も同じだけ待つ。Android は ASCII を uiautomator2 で 1 キーずつ（キーコードと Shift。US 配列）送り、ASCII 以外は間隔に関係なく一度に貼り付ける。iPhone は WebDriverAgent の `frequency`（1 秒あたりの文字数）、iOS シミュレータは 1 文字ずつの `axe type`、Web は Playwright の `delay`
 - `--backend api`（または環境変数 `UIAI_BACKEND=api`）で、Claude Code を通さずに Anthropic API を直接呼ぶ。`ANTHROPIC_API_KEY` が要り、従量課金になる。画像は最新の 2 枚だけを送るので、入力が伸びにくい。1 回の呼び出しは、やり直しを含めて 120 秒まで。実際の API では未検証（偽の応答での単体テストまで）
-- `--parallel` は端末ごとに並列で実行する。Android は接続中の全端末、iOS は USB でつないだ全 iPhone と起動中の全シミュレータ（`--serial`・`--udid` を繰り返して絞れる）、Web は `--browsers` 個（既定 2）のブラウザ。シナリオは空いた端末から順に割り当てる（同じシナリオを全端末で回すのではない）。表示の各行には端末名が付く
+- セクションに `on`（android / ios / web）があるシナリオは、そのセクションだけ別のデバイスで実行する（例: Android のテストの途中で、Web の管理画面を操作する）。`on` のないセクションは実行時のデバイスで実行する。`on` に書いたプラットフォームは、自動で選ぶときの候補から外し、実行できるかも確かめる。AI との会話はデバイスごとに分ける
+- `steps` の `include: <シナリオ>` で、別のシナリオのセクションをその位置に読み込む（`on` を書けば、そのデバイスで実行する）。読み込んだセクションは、読み込んだシナリオの `app` の対象で動く。実行するプラットフォームは、読み込む側のファイル自身の `app` から決まる
+- `--parallel` は端末ごとに並列で実行する（`on` のあるシナリオは、ほかを並列に実行し終えたあとに 1 件ずつ）。Android は接続中の全端末、iOS は USB でつないだ全 iPhone と起動中の全シミュレータ（`--serial`・`--udid` を繰り返して絞れる）、Web は `--browsers` 個（既定 2）のブラウザ。シナリオは空いた端末から順に割り当てる（同じシナリオを全端末で回すのではない）。表示の各行には端末名が付く
 - `--webhook`（または環境変数 `UIAI_WEBHOOK_URL`）を指定すると、失敗を `{"text": ...}` で POST する
 - `--notify`（または環境変数 `UIAI_NOTIFY=1`）を指定すると、失敗（1 回の実行で 5 件まで）と終了を OS のデスクトップ通知でも知らせる。Claude Code を使わずに手元で実行するとき用（mac は osascript、Linux は notify-send、Windows は PowerShell。Windows は未検証）
 - `--dry-run` は実行せずに、シナリオごとの実行先と値のない変数を表示する（`--backend api` なら API キーも確かめる。実行できなければ終了コード 2）

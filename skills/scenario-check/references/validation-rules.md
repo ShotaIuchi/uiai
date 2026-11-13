@@ -23,10 +23,16 @@
 | E014 | `strict`・`optional` や `config` の真偽値が true/false でない | `true` / `false` にする |
 | E015 | `config` の値の型・範囲が不正（正の数でない、リストでないなど）。`config.type_delay`、`then` の `timeout`・`observe` が 0 以上の数でない | 正しい型・値にする |
 | E016 | `config.on_failure`・`config.interrupts.mode` が決められた値でない | `on_failure`: stop_scenario / next_section / stop_all。`interrupts.mode`: allow / report / fail |
+| E017 | セクション（`include` を含む）の `on` が android / ios / web のどれでもない | `android` / `ios` / `web` のどれかにする |
+| E018 | セクションの `on` のプラットフォームが `app` にない（例: `on: web` なのに `app.web` がない。文字列の `app` は、URL なら Web だけ、パッケージ名なら Android と iOS だけ） | `app` にそのプラットフォームの対象を書く |
 | E020 | `replay` がマッピングでない、`replay.from` のセクションがない | 存在する `id` を書く |
 | E021 | `replay.to` のセクションがない | 存在する `id` を書く |
 | E022 | `replay.from` が `to` より後のセクション | 順序を入れ替える |
 | E023 | `replay` が循環している | 循環を断つ |
+| E040 | `include` の値が文字列でない、ファイルがない・読み込めない、YAML の構文エラー | このファイルからの相対パスで、あるシナリオファイルを書く |
+| E041 | `include` が循環している | 循環を断つ |
+| E042 | `include` 先のシナリオにエラーがある（読み込まれるシナリオは、単体でもエラーがないこと） | `uiai check <include 先>` で確かめて直す |
+| E043 | `include` のセクションに `id`・`on` 以外のキーがある | `actions` などは別のセクションに書く |
 | E030 | 定義されていない変数 `(名前)` を使っている | `variables` に定義するか、文字どおりの括弧なら `\(` `\)` と書く |
 | E031 | `variables` がマッピングでない、変数名が不正 | 変数名は英字か `_` で始まり、英数字と `_` だけ |
 | E032 | 同じ変数名が 2 回定義されている | 1 つにする |
@@ -58,6 +64,7 @@ app:
 | W008 | `config.timeout` が「`do` の数 × 10 秒」より短い | AI 方式は 1 ステップ 3〜6 秒かかる。途中で打ち切られる可能性 |
 | W009 | `do` に `timeout`・`observe` が書かれている | `then` にだけ有効。無視される |
 | W010 | `then` に `optional` が書かれている | `do` にだけ有効。無視される |
+| W011 | `replay` の範囲に、`on` が違うセクションがある | 繰り返す `do` は `replay` を書いたセクションのデバイスで実行される。意図どおりなら問題ない |
 
 ## 例
 

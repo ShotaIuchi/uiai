@@ -9,6 +9,7 @@ route fails, uiautomator2 installs its own input method app (com.github.uiautoma
 
 from __future__ import annotations
 
+import io
 import shlex
 import shutil
 import subprocess
@@ -48,12 +49,14 @@ class AndroidDriver(Driver):
         return r.stdout + (r.stderr if r.returncode else "")
 
     def _grab_raw(self) -> Image.Image:
-        b = subprocess.run(self.base + ["exec-out", "screencap"], capture_output=True, timeout=30).stdout
-        if len(b) < 12:
-            raise DriverError("スクリーンショットを取得できない（adb exec-out screencap）")
-        w, h = int.from_bytes(b[0:4], "little"), int.from_bytes(b[4:8], "little")
-        hdr = 16 if len(b) >= 16 + w * h * 4 else 12  # Android 9+ has a 16-byte header
-        return Image.frombuffer("RGBA", (w, h), b[hdr:hdr + w * h * 4], "raw", "RGBA", 0, 1).convert("RGB")
+        """Full-size screenshot. PNG (-p): ~0.2 MB instead of ~10 MB raw pixels per frame, which matters on a
+        USB-connected device. The device spends the time encoding: on an emulator, where the transfer is
+        local, a frame took 0.24 s instead of 0.14 s."""
+        b = subprocess.run(self.base + ["exec-out", "screencap", "-p"], capture_output=True, timeout=30).stdout
+        try:
+            return Image.open(io.BytesIO(b)).convert("RGB")
+        except OSError as e:  # empty, truncated or not a PNG (UnidentifiedImageError is an OSError)
+            raise DriverError("スクリーンショットを取得できない（adb exec-out screencap -p）") from e
 
     def grab(self) -> Image.Image:
         return self._grab_raw().resize((self.iw, self.ih))

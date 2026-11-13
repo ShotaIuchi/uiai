@@ -195,7 +195,7 @@ AI が返す座標は「送った画像上の座標」。ドライバが実機�
 
 | 操作 | Android | iOS シミュレータ | Web |
 |---|---|---|---|
-| 撮影 | `adb exec-out screencap`（raw） | `xcrun simctl io <UDID> screenshot --type=png -`（標準出力に PNG。約 0.4 秒） | `page.screenshot()` |
+| 撮影 | `adb exec-out screencap -p`（PNG。1 枚 約 0.2MB。raw の約 10MB では USB でつないだ実機の転送が遅い。エミュレータでは端末側の変換の分だけ遅く、raw の 0.14 秒が 0.24 秒になった） | `xcrun simctl io <UDID> screenshot --type=png -`（標準出力に PNG。約 0.4 秒） | `page.screenshot()` |
 | タップ | `input tap` | `axe tap --tap-style physical`（座標はポイント。画像の座標から換算） | `mouse.click` |
 | 文字入力 | ASCII は `input text`。それ以外は uiautomator2 でクリップボードに入れて貼り付ける | 英数キー（LANG2）を送ってから `axe type`。ASCII のみ | `keyboard.type` |
 | キー | `input keyevent` | `axe key`（HID のキーコード）。ホームは `axe button home` | `keyboard.press` |

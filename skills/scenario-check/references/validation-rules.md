@@ -20,7 +20,7 @@
 | E011 | `id` が重複している | 別の名前にする |
 | E012 | 1 つの行に `do` と `then` がある | 2 行に分ける |
 | E013 | `wait` が数値でない | 秒数（数値）にする |
-| E014 | `strict` や `config` の真偽値が true/false でない | `true` / `false` にする |
+| E014 | `strict`・`optional` や `config` の真偽値が true/false でない | `true` / `false` にする |
 | E015 | `config` の値の型・範囲が不正（正の数でない、リストでないなど）。`config.type_delay`、`then` の `timeout`・`observe` が 0 以上の数でない | 正しい型・値にする |
 | E016 | `config.on_failure`・`config.interrupts.mode` が決められた値でない | `on_failure`: stop_scenario / next_section / stop_all。`interrupts.mode`: allow / report / fail |
 | E020 | `replay` がマッピングでない、`replay.from` のセクションがない | 存在する `id` を書く |
@@ -57,6 +57,7 @@ app:
 | W007 | `verify`・`config.verify` が書かれている | 廃止（判定は AI の画像判定に一本化）。無視される |
 | W008 | `config.timeout` が「`do` の数 × 10 秒」より短い | AI 方式は 1 ステップ 3〜6 秒かかる。途中で打ち切られる可能性 |
 | W009 | `do` に `timeout`・`observe` が書かれている | `then` にだけ有効。無視される |
+| W010 | `then` に `optional` が書かれている | `do` にだけ有効。無視される |
 
 ## 例
 

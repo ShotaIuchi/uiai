@@ -53,17 +53,31 @@ def booted_udids() -> list[str]:
     return [d["udid"] for d in booted_simulators()]
 
 
+def ios_device_udids() -> list[str]:
+    """iPhones attached by USB (Mac only)."""
+    from .drivers.ios_device import usb_devices
+
+    return [d["udid"] for d in usb_devices()]
+
+
+def ios_udids() -> list[str]:
+    """Everything iOS that can run now: USB iPhones, then booted simulators."""
+    return ios_device_udids() + booted_udids()
+
+
 def _as_list(v: str | list[str] | None) -> list[str]:
     return [] if not v else [v] if isinstance(v, str) else list(v)
 
 
 def probe(serial: str | list[str] | None = None, udid: str | list[str] | None = None) -> dict[str, bool]:
-    """What can run right now: connected Android device, booted iOS simulator, Web (always).
+    """What can run right now: connected Android device, USB iPhone or booted iOS simulator, Web (always).
     With serials/UDIDs given, at least one of them must be available (the others fail when opened)."""
+    from .drivers.usbmux import normalize_udid
+
     want_s, want_u = _as_list(serial), _as_list(udid)
-    serials, booted = android_serials(), booted_udids()
+    serials, ios = android_serials(), {normalize_udid(u) for u in ios_udids()}
     return {"android": any(s in serials for s in want_s) if want_s else bool(serials),
-            "ios": any(u in booted for u in want_u) if want_u else bool(booted),
+            "ios": any(normalize_udid(u) in ios for u in want_u) if want_u else bool(ios),
             "web": True}
 
 
@@ -87,7 +101,7 @@ def resolve(app: Any, requested: str | None, available: dict[str, bool]) -> list
 
 def _hint(p: str) -> str:
     return {"android": "Android 端末・エミュレータを adb で接続する",
-            "ios": "iOS シミュレータを起動する（Mac のみ。操作には AXe が要る）",
+            "ios": "iOS シミュレータを起動するか、iPhone を USB でつなぐ（Mac のみ。シミュレータの操作には AXe が要る）",
             "web": ""}[p]
 
 

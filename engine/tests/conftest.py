@@ -114,6 +114,16 @@ def _no_outside_settings(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_usb_iphones(monkeypatch):
+    """An iPhone plugged into the developer's Mac, or the teams signed in to its Xcode, must not change what
+    the tests do."""
+    from uiai.drivers import ios_device, wda
+
+    monkeypatch.setattr(ios_device, "usb_devices", lambda: [])
+    monkeypatch.setattr(wda, "xcode_teams", lambda: [])
+
+
 @pytest.fixture
 def clock(monkeypatch):
     c = FakeClock()

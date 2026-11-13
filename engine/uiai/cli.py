@@ -69,7 +69,7 @@ def _devices(a: argparse.Namespace, jobs_per_platform: dict[str, int]) -> dict[s
     """Without --parallel: one per platform (as given, or auto-selected by the driver).
     With --parallel: every given (or connected/booted) device, and --browsers browsers, but no more
     devices than the platform has jobs (an idle browser or device would only be started for nothing)."""
-    from .platform import android_serials, booted_udids
+    from .platform import android_serials, ios_udids
 
     out: dict[str, list[Device]] = {}
     for p in sorted(jobs_per_platform):
@@ -77,8 +77,8 @@ def _devices(a: argparse.Namespace, jobs_per_platform: dict[str, int]) -> dict[s
             ids = a.serial or (android_serials() if a.parallel else [None])
             out[p] = [Device(p, s or "android", {"serial": s}) for s in ids]
         elif p == "ios":
-            ids = a.udid or (booted_udids() if a.parallel else [None])
-            out[p] = [Device(p, (u or "ios")[:8], {"udid": u}) for u in ids]
+            ids = a.udid or (ios_udids() if a.parallel else [None])
+            out[p] = [Device(p, (u or "ios")[:8], {"udid": u, "team": a.ios_team}) for u in ids]
         else:
             n = max(1, a.browsers) if a.parallel else 1
             out[p] = [Device(p, f"web{i + 1}" if n > 1 else "web",
@@ -507,7 +507,18 @@ def cmd_setup(a: argparse.Namespace) -> int:
     if sys.platform == "darwin":
         _out("OK   xcrun" if shutil.which("xcrun") else "--   xcrun なし（iOS を使う場合は Xcode を入れる）")
         _out(f"OK   axe: {shutil.which('axe')}" if shutil.which("axe")
-             else "--   axe なし（iOS を使う場合は brew install cameroncooke/axe/axe）")
+             else "--   axe なし（iOS シミュレータを使う場合は brew install cameroncooke/axe/axe）")
+        from .drivers.ios_device import usb_devices
+        from .drivers.wda import xcode_teams
+
+        devs = usb_devices()
+        _out(f"OK   iPhone（USB）: {', '.join(d['udid'] for d in devs)}" if devs
+             else "--   USB でつながった iPhone なし（実機を使う場合はつなぐ）")
+        teams = xcode_teams()
+        # Xcode's record of whether a team is free can be stale (a team enrolled later still reads "Personal
+        # Team"), so only the IDs are shown
+        _out("OK   iPhone 用の署名チーム: " + ", ".join(t["id"] for t in teams) if teams
+             else "--   Xcode にサインインしたチームなし（iPhone を使う場合は Xcode の Settings > Accounts）")
     if not a.skip_browser:
         _out("...  Playwright のブラウザ（Chromium）を取得する")
         cmd = [sys.executable, "-m", "playwright", "install"] + (["--with-deps"] if a.with_deps else []) + ["chromium"]
@@ -603,7 +614,11 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--serial", action="append",
                    help="Android 端末のシリアル（adb -s）。--parallel では繰り返して複数指定できる")
     r.add_argument("--udid", action="append",
-                   help="iOS シミュレータの UDID（起動中が複数あるとき）。--parallel では繰り返して複数指定できる")
+                   help="iOS シミュレータか、USB でつないだ iPhone の UDID（複数あるとき）。"
+                        "--parallel では繰り返して複数指定できる")
+    r.add_argument("--ios-team",
+                   help="iPhone で使う WebDriverAgent の署名チーム ID（Xcode にサインインしたチームが複数あるとき。"
+                        "1 つなら自動、有料と無料があれば有料）。環境変数 UIAI_IOS_TEAM でも指定できる")
     r.add_argument("--parallel", action="store_true",
                    help="端末ごとに並列で実行する（Android は接続中の全端末、iOS は起動中の全シミュレータ、"
                         "Web は --browsers 個のブラウザ。--serial・--udid で絞れる）")

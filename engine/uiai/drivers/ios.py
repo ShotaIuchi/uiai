@@ -60,9 +60,11 @@ class IOSDriver(Driver):
         booted = booted_simulators()
         if udid:
             if udid not in {d["udid"] for d in booted}:
-                raise DriverError(f"iOS シミュレータ {udid} が起動していない（xcrun simctl boot {udid}）")
+                raise DriverError(f"iOS シミュレータ {udid} が起動していない（xcrun simctl boot {udid}）。"
+                                  "iPhone なら USB でつながっていない")
         elif not booted:
-            raise DriverError("起動中の iOS シミュレータがない（Simulator.app で起動するか、xcrun simctl boot <UDID>）")
+            raise DriverError("起動中の iOS シミュレータも、USB でつながった iPhone もない"
+                              "（Simulator.app で起動するか、iPhone を USB でつなぐ）")
         elif len(booted) > 1:
             names = ", ".join(f"{d['name']} ({d['udid']})" for d in booted)
             raise DriverError(f"起動中の iOS シミュレータが複数ある。--udid で選ぶ: {names}")

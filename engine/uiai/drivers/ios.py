@@ -19,7 +19,7 @@ from typing import Any
 
 from PIL import Image
 
-from .base import Driver, DriverError
+from .base import Driver, DriverError, paced
 
 # HID usage codes (keyboard page)
 KEYS = {"enter": 40, "return": 40, "escape": 41, "esc": 41, "backspace": 42, "delete": 42, "tab": 43,
@@ -150,7 +150,11 @@ class IOSDriver(Driver):
             if self._tap(action):
                 time.sleep(0.5)  # let the field take focus
             self._axe("key", str(LANG2))
-            self._axe("type", "--stdin", stdin=text)
+            if self.type_delay > 0:  # AXe has no typing delay: one call per character
+                self.before_first_key()
+                paced(text, self.type_delay, lambda ch: self._axe("type", "--stdin", stdin=ch))
+            else:
+                self._axe("type", "--stdin", stdin=text)
         elif t == "key":
             key = str(action.get("key", "")).strip().lower()
             if key == "home":

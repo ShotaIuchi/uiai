@@ -18,7 +18,7 @@ from typing import Any
 from PIL import Image
 
 from . import usbmux
-from .base import Driver, DriverError
+from .base import Driver, DriverError, paced
 from .wda import WDA_PORT, WDAClient, WDAError, WDARunner, choose_team, wait_ready, xcode_teams
 
 # keys that are typed as characters (WDA has no key events on iOS)
@@ -113,6 +113,17 @@ class IOSDeviceDriver(Driver):
         self.wda.tap(*self._pt(*p))
         return True
 
+    def _type(self, text: str) -> None:
+        d = self.type_delay
+        self.before_first_key()
+        if d <= 0:
+            self.wda.type_text(text)
+        elif d <= 1:
+            # WDA paces the keys itself, in whole characters per second: round down so keys are no closer than d
+            self.wda.type_text(text, frequency=max(1, int(1 / d + 1e-9)))
+        else:  # slower than 1 per second: one request per character
+            paced(text, d, self.wda.type_text)
+
     # -- driver contract -------------------------------------------------------
     def grab(self) -> Image.Image:
         return self._grab_raw().resize((self.iw, self.ih))
@@ -151,7 +162,7 @@ class IOSDeviceDriver(Driver):
         elif t == "input":
             if self._tap(action):
                 time.sleep(0.5)  # let the field take focus
-            self.wda.type_text(str(action.get("text", "")))
+            self._type(str(action.get("text", "")))
         elif t == "key":
             key = str(action.get("key", "")).strip().lower()
             if key == "home":

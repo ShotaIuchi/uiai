@@ -22,7 +22,7 @@ ON_FAILURE = ("stop_scenario", "next_section", "stop_all")
 INTERRUPT_MODES = ("allow", "report", "fail")
 CONFIG_KEYS = {
     "timeout", "clear_data_before", "stop_app_after", "strict", "verify",
-    "then_timeout", "max_actions", "interrupts", "on_failure", "reset", "model",
+    "then_timeout", "max_actions", "interrupts", "on_failure", "reset", "model", "type_delay",
 }
 DEFAULT_TIMEOUT = 600.0
 DEFAULT_THEN_TIMEOUT = 5.0
@@ -80,6 +80,7 @@ class Config:
     on_failure: str = "stop_scenario"
     reset: list[str] = field(default_factory=list)
     model: str | None = None
+    type_delay: float = 0.0  # ms between typed characters; 0 = as fast as the platform types
     clear_data_before: bool = False
     stop_app_after: bool = False
     strict: bool = False
@@ -219,6 +220,8 @@ def check_data(data: Any, duplicates: list[tuple[Any, int]] | None = None) -> li
     for k in ("timeout", "then_timeout", "max_actions"):
         if k in cfg and not (_is_number(cfg[k]) and cfg[k] > 0):
             err("E015", f"`config.{k}` は正の数", f"config.{k}")
+    if "type_delay" in cfg and not (_is_number(cfg["type_delay"]) and cfg["type_delay"] >= 0):
+        err("E015", "`config.type_delay` は 0 以上の数（ミリ秒）", "config.type_delay")
     for k in ("strict", "clear_data_before", "stop_app_after"):
         if k in cfg and not isinstance(cfg[k], bool):
             err("E014", f"`config.{k}` は true/false", f"config.{k}")
@@ -437,6 +440,8 @@ def _parse_config(cfg: dict) -> Config:
             setattr(c, k, float(cfg[k]))
     if _is_number(cfg.get("max_actions")):
         c.max_actions = int(cfg["max_actions"])
+    if _is_number(cfg.get("type_delay")) and cfg["type_delay"] >= 0:
+        c.type_delay = float(cfg["type_delay"])
     intr = cfg.get("interrupts")
     if isinstance(intr, str):
         c.interrupts = Interrupts(mode=intr)

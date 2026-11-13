@@ -5,6 +5,10 @@ ASCII text goes through `adb shell input text`, which cannot type anything else.
 with app_process, no app installed) sets the clipboard and pastes. Side effects: the device
 clipboard is overwritten, and Android may show a "pasted from your clipboard" toast. If that
 route fails, uiautomator2 installs its own input method app (com.github.uiautomator).
+
+With a typing delay (config.type_delay), ASCII is typed one key event at a time through
+uiautomator2 (key code + shift, US layout), since `input keyevent --delay` cannot hold shift and
+every `input` call costs about 0.5 s. Other text is still pasted all at once.
 """
 
 from __future__ import annotations
@@ -18,10 +22,29 @@ from typing import Any
 
 from PIL import Image
 
-from .base import Driver, DriverError
+from .base import Driver, DriverError, paced
 
 KEYS = {"enter": 66, "back": 4, "tab": 61, "delete": 67, "backspace": 67, "del": 112, "home": 3,
         "search": 84, "escape": 111, "esc": 111, "space": 62, "up": 19, "down": 20, "left": 21, "right": 22}
+SHIFT = 1  # KeyEvent.META_SHIFT_ON
+
+
+def _us_keys() -> dict[str, tuple[int, int]]:
+    """Character -> (key code, meta state) on the US layout of Android's virtual keyboard (Generic.kcm)."""
+    keys = {" ": (62, 0), "\n": (66, 0), "\t": (61, 0)}
+    for i, c in enumerate("0123456789"):
+        keys[c] = (7 + i, 0)
+    for i, c in enumerate("abcdefghijklmnopqrstuvwxyz"):
+        keys[c], keys[c.upper()] = (29 + i, 0), (29 + i, SHIFT)
+    symbols = ",.`-=[]\\;'/"
+    for c, code in zip(symbols, (55, 56, 68, 69, 70, 71, 72, 73, 74, 75, 76)):
+        keys[c] = (code, 0)
+    for c, base in zip(")!@#$%^&*(" + "<>~_+{}|:\"?", "0123456789" + symbols):
+        keys[c] = (keys[base][0], SHIFT)
+    return keys
+
+
+US_KEYS = _us_keys()
 
 
 class AndroidDriver(Driver):
@@ -80,12 +103,29 @@ class AndroidDriver(Driver):
                 pass
             self._u2 = None
 
-    def _paste_text(self, text: str) -> None:
+    def _u2_device(self) -> Any:
         if self._u2 is None:
-            import uiautomator2  # only needed for non-ASCII input
+            import uiautomator2  # only needed for non-ASCII input and typing delays
 
             self._u2 = uiautomator2.connect(self.serial)
-        self._u2.send_keys(text)
+        return self._u2
+
+    def _paste_text(self, text: str) -> None:
+        self._u2_device().send_keys(text)
+
+    def _type_keys(self, text: str) -> None:
+        """ASCII, one key event per character, type_delay apart (each takes ~0.15 s anyway)."""
+        u2 = self._u2_device()  # connected before the first key's wait: the first connection takes ~3.4 s
+        self.before_first_key()
+
+        def send(ch: str) -> None:
+            key = US_KEYS.get(ch)
+            if key is None:  # a control character without a key: paste it
+                u2.send_keys(ch)
+            else:
+                u2.press(*key)
+
+        paced(text, self.type_delay, send)
 
     def _tap(self, action: dict) -> bool:
         p = self.xy(action)
@@ -103,10 +143,12 @@ class AndroidDriver(Driver):
             text = str(action.get("text", ""))
             if self._tap(action):  # without coordinates: type into the focused field
                 time.sleep(0.3)
-            if text.isascii():
-                self._adb(["shell", "input text " + shlex.quote(text.replace(" ", "%s"))])
+            if not text.isascii():
+                self._paste_text(text)  # all at once, whatever the typing delay
+            elif self.type_delay > 0:
+                self._type_keys(text)
             else:
-                self._paste_text(text)
+                self._adb(["shell", "input text " + shlex.quote(text.replace(" ", "%s"))])
         elif t == "key":
             key = str(action.get("key", "")).strip()
             code = KEYS.get(key.lower()) or (key if key.isdigit() or key.upper().startswith("KEYCODE_") else None)

@@ -116,12 +116,14 @@ class ScenarioRunner:
                  events: EventLog, redactor: Redactor, model: str,
                  printer: Callable[[str], None] = lambda s: print(s, flush=True), *,
                  rejudge_factory: Callable[[str], object] | None = None, rejudge_model: str = "",
-                 backend: str = ""):
+                 backend: str = "", type_delay: float | None = None):
         self.sc, self.platform, self.app, self.drv = sc, platform, target, driver
         self.ai_factory, self.values, self.out = ai_factory, values, out_dir
         self.rejudge_factory, self.rejudge_model = rejudge_factory, rejudge_model
         self.events, self.redact, self.print = events, redactor, printer
         self.cfg = sc.config
+        # ms between typed characters: --type-delay wins over config.type_delay
+        self.type_delay = sc.config.type_delay if type_delay is None else type_delay
         self.secrets = sc.secret_names
         self.ai = None
         self.res = ScenarioResult(sc.name, str(sc.path), platform, target, model, backend=backend,
@@ -527,6 +529,7 @@ class ScenarioRunner:
         self.print(f"▶ {self.sc.name} @ {self.platform}（{self.app}）")
         pending: list[ThenState] = []
         try:
+            self.drv.type_delay = self.type_delay / 1000  # the device may run several scenarios: set it each time
             self.drv.reset(self.app, self.cfg)
             self.system = system_prompt(self.drv.description, self.drv.iw, self.drv.ih,
                                         self.cfg.interrupts.allow, sorted(self.secrets))

@@ -109,7 +109,9 @@ class WebDriver(Driver):
             if xy is not None:  # input without coordinates types into the focused field
                 p.mouse.click(*xy)
             if t == "input":
-                p.keyboard.type(str(action.get("text", "")))
+                # delay: each key is held this long, so keys start at least this far apart
+                self.before_first_key()
+                p.keyboard.type(str(action.get("text", "")), delay=self.type_delay * 1000)
         elif t == "key":
             p.keyboard.press(playwright_key(str(action.get("key") or "Enter")))
         elif t == "back":

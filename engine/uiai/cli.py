@@ -245,7 +245,7 @@ def cmd_run(a: argparse.Namespace) -> int:
             runner = ScenarioRunner(job.sc, job.platform, target(job.sc.app, job.platform, job.file.parent),
                                     dev.driver, lambda system, m=job.model: session(m, system), job.values, job.out,
                                     events, redactor, job.model, printer, rejudge_factory=rejudge, rejudge_model=rj,
-                                    backend=backend)
+                                    backend=backend, type_delay=a.type_delay)
             res = runner.run()
         except Exception as e:  # noqa: BLE001 — never lose a scenario: it must count in the exit code
             traceback_to_stderr(redactor)
@@ -596,6 +596,16 @@ def cmd_watch(a: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------- #
 
 
+def _milliseconds(v: str) -> float:
+    try:
+        ms = float(v)
+    except ValueError:
+        ms = -1.0
+    if not ms >= 0 or ms == float("inf"):  # also rejects nan
+        raise argparse.ArgumentTypeError(f"0 以上の数（ミリ秒）で指定する: {v}")
+    return ms
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="uiai", description="AI がスクリーンショットを見て操作・判定する UI テスト")
     ap.add_argument("--version", action="version", version=f"uiai {__version__}")
@@ -605,6 +615,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("paths", nargs="+", help="シナリオのファイルかフォルダ")
     r.add_argument("--platform", choices=["android", "ios", "web", "all"])
     r.add_argument("--model", help=f"使うモデル（既定: config.model、なければ {DEFAULT_MODEL}）")
+    r.add_argument("--type-delay", type=_milliseconds, metavar="MS",
+                   help="文字入力の 1 文字ごとの間隔（ミリ秒。既定: config.type_delay、なければ 0 = 最速）。"
+                        "Android の日本語など ASCII 以外は間隔に関係なく一度に貼り付ける")
     r.add_argument("--rejudge-model", default=DEFAULT_REJUDGE_MODEL,
                    help=f"then の不合格を確定する前に判定し直すモデル（既定: {DEFAULT_REJUDGE_MODEL}。none で無効）")
     r.add_argument("--backend", choices=BACKENDS,

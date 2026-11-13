@@ -7,7 +7,7 @@ each driver converts them to device coordinates.
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, Callable, Iterable, TypeVar
 
 from PIL import Image
 
@@ -20,8 +20,24 @@ STALE_CHECKED = ("tap", "input", "key", "back", "scroll")
 STALE = "stale"
 
 
+T = TypeVar("T")
+
+
 class DriverError(Exception):
     """The environment is not usable (device missing, browser not installed...)."""
+
+
+def paced(items: Iterable[T], interval: float, send: Callable[[T], object]) -> None:
+    """send() each item, starting each one no earlier than `interval` seconds after the previous one started.
+    A send that takes longer than the interval is not followed by an extra pause."""
+    due = 0.0
+    for item in items:
+        now = time.time()
+        if now < due:
+            time.sleep(due - now)
+            now = due
+        send(item)
+        due = now + interval
 
 
 class Driver:
@@ -29,6 +45,7 @@ class Driver:
     description = ""        # for the AI prompt, e.g. "an Android device"
     detect_black = False    # report an all-black screen instead of letting the AI guess
     wait_s = 1.0            # a "wait" action: the next screenshot is this long after the one the AI saw
+    type_delay = 0.0        # seconds between typed characters (config.type_delay, --type-delay); 0 = fastest
     iw = ih = 0             # size of the screenshot sent to the AI
 
     def __init__(self, ignore_top: float = 0.0, ignore_right: float = 0.0):
@@ -69,6 +86,13 @@ class Driver:
     def wait_out(self) -> None:
         """Sleep until a pending `wait` is over, before something else than a screenshot (a reset, the end)."""
         self.settler.wait_out()
+
+    def before_first_key(self) -> None:
+        """With a typing delay, the first key also comes `type_delay` after what was done before it (the tap on
+        the field...). On an Android emulator, a key sent right after the field was cleared was dropped now and
+        then (1 in 4 runs); `input text`, whose first key comes ~0.5 s later, never dropped it."""
+        if self.type_delay > 0:
+            time.sleep(self.type_delay)
 
     def act(self, action: dict, app: str, check_stale: bool = False) -> str:
         """Perform an action. With check_stale, a screen that changed after the AI's screenshot

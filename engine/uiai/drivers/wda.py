@@ -330,8 +330,12 @@ class WDAClient:
     def tap(self, x: float, y: float) -> None:
         self.call("POST", self.s("/wda/tap"), {"x": x, "y": y})
 
-    def type_text(self, text: str) -> None:
-        self.call("POST", self.s("/wda/keys"), {"value": [text]})
+    def type_text(self, text: str, frequency: int | None = None) -> None:
+        """frequency: characters per second (WDA's default is 60)."""
+        body: dict[str, Any] = {"value": [text]}
+        if frequency:
+            body["frequency"] = frequency
+        self.call("POST", self.s("/wda/keys"), body)
 
     def drag(self, x1: float, y1: float, x2: float, y2: float, ms: int = 300) -> None:
         """A one-finger touch drag (W3C actions, coordinates in points)."""

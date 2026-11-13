@@ -198,7 +198,7 @@ AI が返す座標は「送った画像上の座標」。ドライバが実機�
 |---|---|---|---|
 | 撮影 | `adb exec-out screencap -p`（PNG。1 枚 約 0.2MB。raw の約 10MB では USB でつないだ実機の転送が遅い。エミュレータでは端末側の変換の分だけ遅く、raw の 0.14 秒が 0.24 秒になった） | `xcrun simctl io <UDID> screenshot --type=png -`（標準出力に PNG。約 0.4 秒） | `page.screenshot()` |
 | タップ | `input tap` | `axe tap --tap-style physical`（座標はポイント。画像の座標から換算） | `mouse.click` |
-| 文字入力 | ASCII は `input text`。それ以外は uiautomator2 でクリップボードに入れて貼り付ける。間隔の指定（`config.type_delay`）があれば、ASCII は uiautomator2 で 1 キーずつ送る | 英数キー（LANG2）を送ってから `axe type`。ASCII のみ。間隔の指定があれば 1 文字ずつ呼ぶ | `keyboard.type`（間隔は `delay`） |
+| 文字入力 | uiautomator2 でクリップボードに入れて貼り付ける（ASCII も）。間隔の指定（`config.type_delay`）があれば、ASCII は uiautomator2 で 1 キーずつ送る | 英数キー（LANG2）を送ってから `axe type`。ASCII のみ。間隔の指定があれば 1 文字ずつ呼ぶ | `keyboard.type`（間隔は `delay`） |
 | キー | `input keyevent` | `axe key`（HID のキーコード）。ホームは `axe button home` | `keyboard.press` |
 | スクロール | `input swipe` | `axe swipe` | `mouse.wheel` |
 | 戻る | `keyevent 4` | `axe gesture swipe-from-left-edge`（左端からのスワイプ） | `go_back` |
@@ -219,7 +219,7 @@ iOS の操作に idb ではなく [AXe](https://github.com/cameroncooke/AXe) を
 文字入力の制約と、その対処:
 
 - **iOS**: AXe の文字入力はハードウェアキーボードのキーを送るため、US 配列の ASCII しか打てない。シミュレータのキーボードが日本語のローマ字入力だと、ASCII がかなに変わる。そこで、打つ前に英数キー（LANG2）を送る（英語のキーボードでは無視される）。ASCII 以外の文字は、`simctl pbcopy` と Cmd+V での貼り付けを試したが入らなかったため、未対応とした（`do` はエラーで失敗する）。
-- **Android**: `adb input text` は ASCII 以外を打てず、シェルからクリップボードに書き込む手段もない。uiautomator2 の `send_keys` を使う。uiautomator2 は端末に補助プログラム（`/data/local/tmp/u2.jar`）を送り込んで `app_process` で動かし、クリップボードへ書き込んでから入力欄に貼り付ける。うまくいかないときは、uiautomator2 が自前の入力メソッド（APK）を入れて打つ。副作用として、端末のクリップボードが上書きされ、Android の版によってはクリップボードの読み書きを知らせる表示が出る。最初の接続に約 3.4 秒かかる。
+- **Android**: `adb input text` は ASCII 以外を打てず（日本語を渡すと端末側で `NullPointerException` になり、ASCII と混ぜても何も入らない。Android 16 のエミュレータで確認）、シェルからクリップボードに書き込む手段もない（`cmd clipboard` は「No shell command implementation」）。そこで、文字は ASCII も含めて uiautomator2 の `send_keys` で貼り付ける（以前は ASCII だけ `input text` で打っていた。入力の方式を 1 つにそろえた）。uiautomator2 は端末に補助プログラム（`/data/local/tmp/u2.jar`）を送り込んで `app_process` で動かし、クリップボードへ書き込んでから入力欄に貼り付ける。うまくいかないときは、uiautomator2 が自前の入力メソッド（APK）を入れて打つ。副作用として、端末のクリップボードが上書きされ、Android の版によってはクリップボードの読み書きを知らせる表示が出る。最初の接続に約 3.4 秒かかる。貼り付けの直後は、画面の左下にクリップボードの表示が出て、Gboard の候補欄に貼り付けた文字列が出た（エミュレータ。1.5 秒後には消えていた）。撮影がその間に当たると、入力した文字が画像に写って AI に送られる。そこで、秘密の値（`secret: true`）を含む ASCII の入力は、クリップボードを通さず `input text` で打つ（エンジンが秘密の値を埋めた入力に印を付けてドライバに渡す）。ASCII 以外の秘密の値は貼り付けるしかない。
 - **入力の間隔**（`config.type_delay`・`--type-delay`。ミリ秒）: 次のキーは、前のキーを送り始めてから指定の時間より前には送らない。1 キーの送信が指定より長くかかるときは、それ以上待たない。最初のキーも、直前の操作（入力欄のタップ、iOS シミュレータでは英数キー）から指定の時間だけ待って送る。Android のエミュレータで、入力欄を空にした直後に送った最初のキーが落ちることがあったため（下の表、15 章）。Android の `input keyevent --delay` は Shift を押せず（大文字・記号を打てない）、`input` は 1 回の呼び出しに約 0.5 秒かかるため、uiautomator2 でキーコードと Shift（US 配列）を 1 キーずつ送る（エミュレータで 1 キー約 0.2 秒）。日本語など ASCII 以外は、間隔に関係なく一度に貼り付ける。iPhone は WebDriverAgent の `/wda/keys` の `frequency`（1 秒あたりの文字数。整数なので、指定より間が空く側に切り捨てる。1 秒を超える間隔は 1 文字ずつ送る）。
 
 **撮影できない画面**: Android の保護された画面（`FLAG_SECURE`。決済・パスワード入力の画面など）は、スクリーンショットが真っ黒になる可能性が高い（未検証）。UI ツリーを使わないため代わりの手段はない。真っ黒な画面が `then.timeout` を超えて続いたら、AI に推測させず「撮影できない画面の可能性」という理由で失敗にする。制約としてドキュメントにも明記する。
@@ -537,7 +537,7 @@ variables:
 段階 3 で行ったこと:
 
 - iOS シミュレータのドライバ（`engine/uiai/drivers/ios.py`）。起動中のシミュレータを自動で選び、複数あれば `uiai run --udid` で選ぶ。`uiai setup` が xcrun と AXe の有無を表示する
-- Android の ASCII 以外の文字入力（uiautomator2。7 章）。依存の版は固定（3.7.1）
+- Android の文字入力（uiautomator2。7 章）。依存の版は固定（3.7.1）
 - 静止の判定で、画面の右端 2% を比べない設定（Android・iOS。下の表）
 - 仕様書・`/uiai:test`・README を更新し、プラグインの版を 0.3.0 にした
 
@@ -620,7 +620,7 @@ variables:
 | 判断後の画面変化 | 動き続ける画面では、判断後の画面変化の検出（8.3）が毎回働き、1 つの `do` につき最大 2 回撮り直す分だけ時間が増える |
 | iOS | シミュレータの設定アプリでのみ確認（14.3）。シミュレータでは ASCII 以外の文字は入力できない。実機（WebDriverAgent）は、偽の usbmuxd・偽の WDA での単体テストと、WDA のビルド（Xcode 26.2）までで、iPhone での動作・速さ・ASCII 以外の文字入力は未検証。AXe は v2.0.3 で確認しており、オプション（`--tap-style` など）が版で変わると動かなくなる。Windows・Linux からは Mac か実機の準備が必要 |
 | Android の 1 キーずつの入力 | `type_delay` を指定したときの ASCII（7 章）。エミュレータの設定アプリの検索欄で、記号・大文字を含む 37 文字が正しく入ることを確かめた。入力欄を uiautomator2 で空にした直後に打つと、先頭の 1 文字が落ちることがあった（新しい接続で 4 回中 1 回。`input text` では 4 回とも落ちず、空にしてから 1 秒待つと 8 回とも落ちず）。最初のキーの前にも指定の間隔を待つようにしてからは、同じ条件（間隔 0.4 秒）で 12 回とも落ちなかった。最初のキーが画面の切り替わり中に届いた可能性が高いが、原因は未確認。間隔が短い（例: 50 ミリ秒）と待ちも短いため、落ちる可能性は残る。実機は未検証 |
-| Android の日本語入力 | uiautomator2 でクリップボード経由で入力する（7 章）。端末のクリップボードを上書きし、Android の版によっては通知が出る。Android 16 のエミュレータ（Gboard）でのみ確認。実機・ほかのキーボード・パスワード欄は未検証 |
+| Android の文字入力 | ASCII も含めて uiautomator2 でクリップボードから貼り付ける（7 章）。端末のクリップボードを上書きする。貼り付けの直後は、クリップボードの表示と Gboard の候補欄に貼り付けた文字列が出る（1.5 秒後には消えていた）。秘密の値を含む ASCII の入力は `input text` で打つため、どちらも出ない（エミュレータで確認）。ASCII 以外の秘密の値は貼り付けるため、撮影がその間に当たると画像に写って AI に送られ、結果に残る可能性がある。キー入力に反応するアプリでは、打つのと動きが変わることがある。Android 16 のエミュレータ（Gboard）でのみ確認。実機・ほかのキーボード・パスワード欄は未検証 |
 | Windows | 文字コード・`claude` の起動・`bin/uiai.cmd`（PowerShell）と `bin/uiai`（Git Bash）からの実行は未検証 |
 | CI | `claude -p` の CI での認証（長期トークン）、`uiai setup --with-deps` での Linux のブラウザの準備、CI 上のエミュレータの速さは未検証（手順は `docs/ci/`） |
 | 見張りの寿命 | Monitor の寿命の上限は環境で違う（10 分の例あり）。`uiai watch` を 9 分で区切って張り直すが、張り直しの間に Claude が別の作業をしていると、失敗の通知が遅れる |

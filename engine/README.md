@@ -101,7 +101,7 @@ cd engine && uv run --no-project --with pyyaml==6.0.3 --with pillow==13.0.0 --wi
 | `uiai/ai/protocol.py` | AI への指示と応答の読み取り |
 | `uiai/ai/claude_code.py` | `claude -p` の持続セッション（stream-json で画像とテキストを送る。ツール・MCP・ユーザー設定は無効にする） |
 | `uiai/ai/api.py` | Anthropic API を直接呼ぶ（`--backend api`）。標準ライブラリだけで呼び、画像は最新 2 枚だけ送り、プロンプトキャッシュを使う。実際の API では未検証 |
-| `uiai/drivers/` | Android（adb。ASCII 以外の文字は uiautomator2 でクリップボードから貼り付け、入力の間隔を指定したときの ASCII は uiautomator2 で 1 キーずつ送る）・iOS（`xcrun simctl` と AXe）・Web（Playwright） |
+| `uiai/drivers/` | Android（adb。文字は uiautomator2 でクリップボードから貼り付け、入力の間隔を指定したときの ASCII は uiautomator2 で 1 キーずつ送る）・iOS（`xcrun simctl` と AXe）・Web（Playwright） |
 | `uiai/events.py` / `notify.py` / `desktop.py` | イベント出力、Webhook、デスクトップ通知 |
 | `uiai/redact.py` | 秘密の値を伏せる |
 | `uiai/report.py` | `result.json`・`report.md`・`report.html`・`summary.md` |

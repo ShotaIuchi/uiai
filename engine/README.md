@@ -33,17 +33,18 @@ uiai watch --run latest                # 実行中の失敗を 1 行ずつ表示
 ```
 uiai run <シナリオかフォルダ>... [--platform android|ios|web|all] [--model haiku] [--rejudge-model sonnet|none]
          [--backend claude-code|api]
-         [--serial <adb シリアル>]... [--udid <シミュレータ>]... [--parallel] [--browsers N]
+         [--serial <adb シリアル>]... [--udid <シミュレータか iPhone>]... [--ios-team ID] [--parallel] [--browsers N]
          [--browser-path <chromium>] [--headed] [--var NAME=VALUE]... [--webhook URL] [--notify]
          [--run-id ID] [--results-dir DIR] [--fail-on-warning] [--dry-run]
 ```
 
-- プラットフォームは `app` と接続中の対象（Android 端末・起動中の iOS シミュレータ）から決まる。複数の候補が残ったら `--platform` を求める
-- Android 端末が複数つながっていれば `--serial`、iOS シミュレータが複数起動していれば `--udid` で選ぶ
+- プラットフォームは `app` と接続中の対象（Android 端末・USB でつないだ iPhone・起動中の iOS シミュレータ）から決まる。複数の候補が残ったら `--platform` を求める
+- Android 端末が複数つながっていれば `--serial`、iOS の対象（iPhone とシミュレータ）が複数あれば `--udid` で選ぶ
+- iPhone は WebDriverAgent で操作する。iPhone で動いていなければ、`~/Library/Caches/uiai/wda` に版を固定して取得し、Xcode にサインインしたチームで署名してビルドし（`xcodebuild build-for-testing`。初回は数分）、`xcodebuild test-without-building` で起動して、終わったら止める。チームが複数あれば `--ios-team`（または `UIAI_IOS_TEAM`）で選ぶ（有料と無料のチームがあれば有料を使う）。Mac から iPhone のポートへは usbmuxd で直接つなぐ（iproxy・Appium は要らない）
 - 値のない変数は、`--var`、`env:` の環境変数、対話入力の順に解決する。どれもなければ、そのシナリオは実行しない。実行の前に、全シナリオの分をまとめて解決する
 - `then` が待ち時間を過ぎても不合格のときは、確定する前に `--rejudge-model`（既定 sonnet）が同じ画像で判定し直す。sonnet が合格とすれば合格にするが、判定が分かれたことを警告に残す。`none` で無効
 - `--backend api`（または環境変数 `UIAI_BACKEND=api`）で、Claude Code を通さずに Anthropic API を直接呼ぶ。`ANTHROPIC_API_KEY` が要り、従量課金になる。画像は最新の 2 枚だけを送るので、入力が伸びにくい。1 回の呼び出しは、やり直しを含めて 120 秒まで。実際の API では未検証（偽の応答での単体テストまで）
-- `--parallel` は端末ごとに並列で実行する。Android は接続中の全端末、iOS は起動中の全シミュレータ（`--serial`・`--udid` を繰り返して絞れる）、Web は `--browsers` 個（既定 2）のブラウザ。シナリオは空いた端末から順に割り当てる（同じシナリオを全端末で回すのではない）。表示の各行には端末名が付く
+- `--parallel` は端末ごとに並列で実行する。Android は接続中の全端末、iOS は USB でつないだ全 iPhone と起動中の全シミュレータ（`--serial`・`--udid` を繰り返して絞れる）、Web は `--browsers` 個（既定 2）のブラウザ。シナリオは空いた端末から順に割り当てる（同じシナリオを全端末で回すのではない）。表示の各行には端末名が付く
 - `--webhook`（または環境変数 `UIAI_WEBHOOK_URL`）を指定すると、失敗を `{"text": ...}` で POST する
 - `--notify`（または環境変数 `UIAI_NOTIFY=1`）を指定すると、失敗（1 回の実行で 5 件まで）と終了を OS のデスクトップ通知でも知らせる。Claude Code を使わずに手元で実行するとき用（mac は osascript、Linux は notify-send、Windows は PowerShell。Windows は未検証）
 - `--dry-run` は実行せずに、シナリオごとの実行先と値のない変数を表示する（`--backend api` なら API キーも確かめる。実行できなければ終了コード 2）

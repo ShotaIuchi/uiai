@@ -1,7 +1,7 @@
 ---
 name: test
-description: 自然言語で書いたシナリオ YAML で、Android・iOS（Mac のシミュレータ）・Web の UI テストを実行する。AI がスクリーンショットを見て 1 ステップずつ操作・判定する。実行はバックグラウンドで進め、失敗はその場でチャットに知らせ、終わったら結果をまとめる。「UI テストを実行して」「このシナリオを走らせて」などで使う。
-argument-hint: "<シナリオかフォルダ>... [--platform android|ios|web|all] [--model haiku] [--rejudge-model sonnet|none] [--var NAME=VALUE] [--serial <adb シリアル>] [--udid <シミュレータ>] [--parallel] [--headed]"
+description: 自然言語で書いたシナリオ YAML で、Android・iOS（Mac のシミュレータか、USB でつないだ iPhone）・Web の UI テストを実行する。AI がスクリーンショットを見て 1 ステップずつ操作・判定する。実行はバックグラウンドで進め、失敗はその場でチャットに知らせ、終わったら結果をまとめる。「UI テストを実行して」「このシナリオを走らせて」などで使う。
+argument-hint: "<シナリオかフォルダ>... [--platform android|ios|web|all] [--model haiku] [--rejudge-model sonnet|none] [--var NAME=VALUE] [--serial <adb シリアル>] [--udid <シミュレータか iPhone>] [--ios-team <チーム ID>] [--parallel] [--headed]"
 allowed-tools: Bash(uiai *), Bash(date *)
 ---
 
@@ -23,8 +23,9 @@ allowed-tools: Bash(uiai *), Bash(date *)
 | `--rejudge-model <名前>` | `then` の不合格を確定する前に判定し直すモデル（既定 sonnet。`none` で無効） |
 | `--var NAME=VALUE` | 変数の値（繰り返し可） |
 | `--serial <シリアル>` | Android 端末（複数接続しているとき。`--parallel` では繰り返して複数指定できる） |
-| `--udid <UDID>` | iOS シミュレータ（複数起動しているとき。`--parallel` では繰り返して複数指定できる） |
-| `--parallel` | 端末ごとに並列で実行する（Android は接続中の全端末、iOS は起動中の全シミュレータ、Web は `--browsers` 個のブラウザ。既定 2）。シナリオは空いた端末に割り当てる |
+| `--udid <UDID>` | iOS シミュレータか、USB でつないだ iPhone（複数あるとき。`--parallel` では繰り返して複数指定できる） |
+| `--ios-team <チーム ID>` | iPhone で使う WebDriverAgent の署名チーム（Xcode にサインインしたチームが複数あるとき） |
+| `--parallel` | 端末ごとに並列で実行する（Android は接続中の全端末、iOS は USB でつないだ全 iPhone と起動中の全シミュレータ、Web は `--browsers` 個のブラウザ。既定 2）。シナリオは空いた端末に割り当てる |
 | `--headed` | Web のブラウザを表示する |
 | `--fail-on-warning` | 警告付き合格も失敗として扱う |
 | `--webhook <URL>` | 失敗を Slack などにも送る（環境変数 `UIAI_WEBHOOK_URL` でも可） |
@@ -44,7 +45,7 @@ uiai run <シナリオ>... [オプション] --dry-run
 | `uiai: command not found` | プラグインが有効か確認する。uv がなければ入れ方を案内する（https://docs.astral.sh/uv/） |
 | シナリオの形式エラー | エラーを伝え、`/uiai:scenario-check` で直せることを案内して止まる。勝手に直さない |
 | 複数のプラットフォームが候補 | どれで実行するか（`all` も可）をユーザーに聞き、`--platform` を付ける |
-| 実行対象が見つからない | Android は端末・エミュレータの接続（`adb devices`）、iOS はシミュレータの起動（Simulator.app か `xcrun simctl boot <UDID>`）を案内する |
+| 実行対象が見つからない | Android は端末・エミュレータの接続（`adb devices`）、iOS はシミュレータの起動（Simulator.app か `xcrun simctl boot <UDID>`）か、iPhone を USB でつなぐことを案内する |
 | 値のない変数（秘密でない） | ユーザーに値を聞き、`--var NAME=VALUE` で渡す |
 | 値のない変数（秘密） | **チャットで値を聞かない**（会話に残るため）。表示された環境変数を設定してから Claude Code を起動し直すか、ユーザー自身が端末で `uiai run` を実行すれば対話入力できることを伝える |
 
@@ -106,8 +107,10 @@ Monitor には寿命の上限がある（環境によっては 10 分）。`watc
 | `claude` がない、認証エラー | Claude Code CLI のインストールとログインを案内する |
 | 端末が見つからない・途中で切れた | `adb devices` の確認を案内する |
 | AXe が見つからない（iOS） | `brew install cameroncooke/axe/axe` で入れられることを伝える。入れるのはユーザーに確認してから |
-| 起動中の iOS シミュレータが複数ある | 表示された中からどれを使うかユーザーに聞き、`--udid` を付ける |
-| iOS で日本語を入力する `do` が失敗した | iOS は ASCII 以外の文字の入力に未対応であることを伝える |
+| 起動中の iOS シミュレータが複数ある、iPhone とシミュレータの両方がある | 表示された中からどれを使うかユーザーに聞き、`--udid` を付ける |
+| iOS シミュレータで日本語を入力する `do` が失敗した | iOS シミュレータは ASCII 以外の文字の入力に未対応であることを伝える |
+| WebDriverAgent をビルド・起動できない（iPhone） | エラーに出た対処（Xcode へのサインイン、デベロッパモード、UI オートメーション、開発元の信頼、ロックの解除）を伝える。iPhone 側の操作はユーザーにしてもらう。署名チームが複数あるときは、どれを使うか聞いて `--ios-team` を付ける |
+| 「WebDriverAgent をビルドする」と出て時間がかかっている | 初回のビルドは数分かかることを伝えて待つ |
 
 ## 注意
 

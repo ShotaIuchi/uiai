@@ -21,7 +21,7 @@
 |---|---|
 | Android | ✅（ASCII 以外の文字はクリップボード経由で入力する） |
 | Web | ✅（Chromium） |
-| iOS | ✅（Mac のシミュレータのみ。ASCII 以外の文字入力は未対応） |
+| iOS | ✅（Mac のシミュレータと、Mac に USB でつないだ iPhone。シミュレータは ASCII 以外の文字入力に未対応） |
 
 ## コマンド
 
@@ -57,7 +57,8 @@ claude --plugin-dir /path/to/uiai
 | [uv](https://docs.astral.sh/uv/) | 実行エンジンの起動。Python 本体と依存は uv が自動で用意する |
 | Claude Code | AI の呼び出し（ログイン済みであること） |
 | adb | Android（端末かエミュレータを接続しておく） |
-| Xcode と [AXe](https://github.com/cameroncooke/AXe) | iOS（Mac のみ。シミュレータを起動しておく）。AXe は `brew install cameroncooke/axe/axe` |
+| Xcode と [AXe](https://github.com/cameroncooke/AXe) | iOS シミュレータ（Mac のみ。シミュレータを起動しておく）。AXe は `brew install cameroncooke/axe/axe` |
+| Xcode と署名チーム | iPhone（Mac のみ。USB でつなぐ）。Xcode の Settings > Accounts でチームの Apple ID にサインインしておく（有料の Developer Program でも、無料の Apple ID でもよい）。iPhone 側で「デベロッパモード」と、設定 > デベロッパの「UI オートメーションを有効にする」をオンにする。操作に使う [WebDriverAgent](https://github.com/appium/WebDriverAgent) は、初回の実行時に取得・ビルドする（数分かかる） |
 | Chromium | Web。初回に `uiai setup` で取得する（`/uiai:test` が必要に応じて実行する） |
 | ffmpeg | 動画からのシナリオ作成 |
 

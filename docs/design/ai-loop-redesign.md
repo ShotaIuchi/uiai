@@ -162,6 +162,7 @@ uiai/
 | Android（adb） | ○ | ○ | ○ |
 | Web（Playwright） | ○ | ○ | ○ |
 | iOS シミュレータ（Xcode と AXe） | ○ | × | × |
+| iOS 実機（USB。Xcode と WebDriverAgent） | ○ | × | × |
 
 Windows での実装上の注意:
 
@@ -176,7 +177,7 @@ iOS シミュレータは Xcode の一部で、macOS でしか動かない。Win
 | 方法 | 必要なもの | 評価 |
 |---|---|---|
 | ① 別の Mac を遠隔操作 | Mac と Xcode がどこかに 1 台。Windows・Linux 側からは、Mac 上の `simctl` と AXe を SSH などで呼ぶ（idb なら、操作側ソフトと Mac 側の常駐ソフトがネットワーク越しに通信する作りがある） | 一番現実的 |
-| ② 実機の iPhone を USB で直接つなぐ | 撮影は pymobiledevice3 や go-ios で可能。タップと文字入力には、iPhone 上の WebDriverAgent が必要（Apple の開発者署名付きで、最初の 1 回は Mac の Xcode でビルド） | iOS 17 以降は「実験的」扱いで、手順が重く不安定（未検証） |
+| ② 実機の iPhone を USB で直接つなぐ | 撮影は pymobiledevice3 や go-ios で可能。タップと文字入力には、iPhone 上の WebDriverAgent が必要（Apple の開発者署名付きで、最初の 1 回は Mac の Xcode でビルド） | iOS 17 以降は「実験的」扱いで、手順が重く不安定（未検証）。Mac につないだ iPhone は 7 章のとおり対応した |
 | ③ クラウドの実機サービス | Mac 不要。有料 | 予算があれば一番手軽 |
 
 iOS ドライバは、撮影・タップ・入力の担当部分（`simctl` と AXe をローカルで使う／遠隔の Mac で使う／WebDriverAgent の HTTP を使う）を差し替えられる作りにする。
@@ -203,6 +204,15 @@ AI が返す座標は「送った画像上の座標」。ドライバが実機�
 | 戻る | `keyevent 4` | `axe gesture swipe-from-left-edge`（左端からのスワイプ） | `go_back` |
 | 起動 | `monkey -p` | `simctl launch` | `goto` |
 | 初期化 | `force-stop`（＋関連パッケージ、任意で `pm clear`） | `simctl terminate`（＋関連アプリ）とホームボタン。データの消去は未対応 | 新しいブラウザコンテキスト |
+
+**iOS 実機**（Mac に USB でつないだ iPhone。`drivers/ios_device.py`）は、[WebDriverAgent](https://github.com/appium/WebDriverAgent)（WDA）の HTTP API で操作する。Appium と同じやり方を、Appium と Node.js なしで行う（`drivers/wda.py`）。
+
+- WDA は版を固定して（v16.15.3、コミットも照合）`~/Library/Caches/uiai/wda` に取得する。
+- Xcode の自動署名で、ユーザーのチームでビルドする（`xcodebuild build-for-testing -allowProvisioningUpdates -allowProvisioningDeviceRegistration`）。bundle ID はチームごとに別にする（`com.facebook.WebDriverAgentRunner` はほかのチームが登録済みで使えない）。ビルドの確認は起動のたびに行うので、無料のチームの 7 日で切れる署名も、そのときに作り直される。
+- `xcodebuild test-without-building` で起動し、実行の終わりに止める。WDA がすでに動いていれば（Xcode や別の道具で起動済み）そのまま使う。
+- Mac から iPhone のポート 8100 へは usbmuxd に直接つなぐ（`drivers/usbmux.py`。iproxy などは使わない）。
+- 撮影は WDA の `/screenshot`。既定の HEIC は Pillow で読めないため、設定で JPEG（画質 0.8）にする。タップは `/wda/tap`、スクロールと戻る（左端からのスワイプ）は W3C の touch 操作、文字入力とキー（Enter など）は `/wda/keys`、ホームは `/wda/homescreen`、起動と終了は `/wda/apps/launch`・`terminate`。座標はポイントで、画像の座標から換算する（シミュレータと同じ）。
+- iPhone とシミュレータの両方があるときは、`--udid` で選ばせる。iPhone だけなら iPhone を使う。
 
 iOS の操作に idb ではなく [AXe](https://github.com/cameroncooke/AXe) を使う（段階 3 で変更）。AXe は Homebrew で入るコマンド 1 つで済む。idb は Mac 側の常駐ソフト（`idb_companion`）と Python の操作側ソフト（`fb-idb`）の 2 つが要る。
 
@@ -606,7 +616,7 @@ variables:
 | 長いシナリオ | 会話が 5 万トークンを超えたら作り直す（10 章）。84 ステップ・呼び出し 49 回までは、序盤と終盤で 1 ステップの時間が変わらないことを確かめた（14.4）。作り直した直後の判定が揺れる可能性は残る（切り替えは 1 回の実行で 0〜1 回しか起きておらず、件数が少ない） |
 | 端末の負荷 | Android 設定アプリのシナリオが 1 度だけ 94.7 秒かかった（通常は 40〜50 秒）。撮影の待ちが 1 回 2〜10 秒に延びていた（取得回数と時間から、1 枚あたり約 2 秒）。直後のエミュレータは負荷平均 9.4・スワップ使用 1GB で、負荷が下がってから走らせ直すと 43.5 秒だった。エミュレータの負荷が原因の可能性が高い（重かった最中の撮影時間は測っていない）。iOS シミュレータと同時に動かすと、Android の設定アプリが応答しなくなったこともある（14.3） |
 | 判断後の画面変化 | 動き続ける画面では、判断後の画面変化の検出（8.3）が毎回働き、1 つの `do` につき最大 2 回撮り直す分だけ時間が増える |
-| iOS | シミュレータの設定アプリでのみ確認（14.3）。実機は未対応。ASCII 以外の文字は入力できない。AXe は v2.0.3 で確認しており、オプション（`--tap-style` など）が版で変わると動かなくなる。Windows・Linux からは Mac か実機の準備が必要 |
+| iOS | シミュレータの設定アプリでのみ確認（14.3）。シミュレータでは ASCII 以外の文字は入力できない。実機（WebDriverAgent）は、偽の usbmuxd・偽の WDA での単体テストと、WDA のビルド（Xcode 26.2）までで、iPhone での動作・速さ・ASCII 以外の文字入力は未検証。AXe は v2.0.3 で確認しており、オプション（`--tap-style` など）が版で変わると動かなくなる。Windows・Linux からは Mac か実機の準備が必要 |
 | Android の日本語入力 | uiautomator2 でクリップボード経由で入力する（7 章）。端末のクリップボードを上書きし、Android の版によっては通知が出る。Android 16 のエミュレータ（Gboard）でのみ確認。実機・ほかのキーボード・パスワード欄は未検証 |
 | Windows | 文字コード・`claude` の起動・`bin/uiai.cmd`（PowerShell）と `bin/uiai`（Git Bash）からの実行は未検証 |
 | CI | `claude -p` の CI での認証（長期トークン）、`uiai setup --with-deps` での Linux のブラウザの準備、CI 上のエミュレータの速さは未検証（手順は `docs/ci/`） |

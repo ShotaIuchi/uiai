@@ -12,7 +12,7 @@ UI ツリー・DOM・リソース ID は使わないので、**画面に見え�
 name: "ログインテスト"
 app:
   android: "com.example.app"        # パッケージ名
-  ios: "com.example.App"            # Bundle ID（Mac のシミュレータ）
+  ios: "com.example.App"            # Bundle ID（Mac のシミュレータか、USB でつないだ iPhone）
   web: "https://example.com/login"  # 最初に開く URL
 
 variables:
@@ -62,7 +62,7 @@ app: "https://example.com"       # Web
 ### 実行するプラットフォームの決まり方
 
 1. `uiai run --platform android|ios|web|all` の指定があれば従う。
-2. なければ、`app` に書かれたプラットフォームのうち、**いま実行できるもの**（接続中の Android 端末、起動中の iOS シミュレータ。Web は常に可）に絞る。
+2. なければ、`app` に書かれたプラットフォームのうち、**いま実行できるもの**（接続中の Android 端末、USB でつないだ iPhone か起動中の iOS シミュレータ。Web は常に可）に絞る。
 3. 1 つに決まればそれで実行する。複数残ったら実行せず、`--platform` の指定を求める（`all` なら残った全部で実行する）。
 
 ## variables
@@ -240,12 +240,13 @@ config:
 
 ## 制限
 
-- iOS は Mac のシミュレータだけ（実機は未対応）。起動しておいたシミュレータを使い、操作には [AXe](https://github.com/cameroncooke/AXe) が要る。
+- iOS は Mac のシミュレータと、Mac に USB でつないだ iPhone。シミュレータは起動しておき、操作には [AXe](https://github.com/cameroncooke/AXe) が要る。iPhone は [WebDriverAgent](https://github.com/appium/WebDriverAgent) で操作する。初回の実行時に取得し、Xcode にサインインしたチームで署名してビルドする（数分かかる）。iPhone とシミュレータの両方があるときは `--udid` で選ぶ。
+- iPhone を使う前に、iPhone 側で「デベロッパモード」（設定 > プライバシーとセキュリティ）と、設定 > デベロッパの「UI オートメーションを有効にする」をオンにする。無料の Apple ID のチームでは、初回に設定 > 一般 > VPN とデバイス管理で開発元を信頼する必要があり、署名は 7 日で切れる（切れていれば、実行のたびに行うビルドの確認で作り直される）。
 - AI が使える操作は、タップ・文字入力・キー・戻る・スクロール・アプリの起動だけ。長押し・ドラッグ・ピンチは使えない。
-- iOS は日本語などの ASCII 以外の文字を入力できない（その `do` は失敗する）。
+- iOS シミュレータは日本語などの ASCII 以外の文字を入力できない（その `do` は失敗する）。iPhone は WebDriverAgent の文字入力を使う（ASCII 以外が入るかは未検証）。
 - Android の ASCII 以外の文字は、端末のクリップボードに入れて貼り付ける。クリップボードの中身は上書きされ、Android の版によってはクリップボードの読み書きを知らせる表示が出る。
 - iOS の「戻る」は画面の左端からのスワイプ。戻るボタンがある画面では AI がボタンを押す。
-- iOS では `config.clear_data_before` は効かない（アプリのデータは消さない）。
+- iOS では `config.clear_data_before` は効かない（アプリのデータは消さない）。iPhone でも同じ。
 - Android の `FLAG_SECURE` の画面は撮影すると真っ黒になる可能性が高く、判定できない。
 - スクリーンショットは Anthropic の API に送られる。機密情報を表示するアプリでは注意する。
 

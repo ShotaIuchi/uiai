@@ -43,14 +43,24 @@ class FakeDriver:
         self.watch_results: list[bool] = []
         self.watched: list[float] = []
         self.stale: list[bool] = []
+        self.trace: list[str] = []   # observe / act:<type> / wait:<s> / wait_out / reset / stop_app, in order
 
     def reset(self, app, cfg):
         self.resets += 1
+        self.trace.append("reset")
 
     def stop_app(self, app):
-        pass
+        self.trace.append("stop_app")
+
+    def wait_after_action(self, seconds):
+        if seconds:
+            self.trace.append(f"wait:{seconds:g}")
+
+    def wait_out(self):
+        self.trace.append("wait_out")
 
     def observe(self):
+        self.trace.append("observe")
         return Observation(b"jpeg", self.iw, self.ih, None, self.black, 1, 0.0)
 
     def watch(self, secs):
@@ -62,6 +72,7 @@ class FakeDriver:
         if check_stale and self.stale and self.stale.pop(0):
             return "stale"
         self.acts.append(action)
+        self.trace.append(f"act:{action.get('type')}")
         return "ok"
 
 

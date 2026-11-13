@@ -126,8 +126,6 @@ class AndroidDriver(Driver):
             out = self._adb(["shell", "monkey", "-p", app, "-c", "android.intent.category.LAUNCHER", "1"])
             if "No activities found" in out or "Error" in out:
                 return f"error: 起動できない（{app}）"
-        elif t == "wait":
-            time.sleep(self.wait_s)
         elif t in ("none", "fail"):
             pass
         else:

@@ -6,6 +6,7 @@ each driver converts them to device coordinates.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from PIL import Image
@@ -27,7 +28,7 @@ class Driver:
     platform = ""           # "android" | "web"
     description = ""        # for the AI prompt, e.g. "an Android device"
     detect_black = False    # report an all-black screen instead of letting the AI guess
-    wait_s = 1.0            # duration of a "wait" action
+    wait_s = 1.0            # a "wait" action: the next screenshot is this long after the one the AI saw
     iw = ih = 0             # size of the screenshot sent to the AI
 
     def __init__(self, ignore_top: float = 0.0, ignore_right: float = 0.0):
@@ -58,10 +59,27 @@ class Driver:
     def watch(self, seconds: float) -> bool:
         return self.settler.watch(self.grab, seconds)
 
+    def wait_after_action(self, seconds: float) -> None:
+        """Scenario `wait`: take the next screenshot no earlier than `seconds` after the last screen action
+        ended (from now if there was none since the start or a reset). The settling runs meanwhile."""
+        if seconds > 0:
+            since = self.settler.acted_at
+            self.settler.hold((since if since is not None else time.time()) + seconds)
+
+    def wait_out(self) -> None:
+        """Sleep until a pending `wait` is over, before something else than a screenshot (a reset, the end)."""
+        self.settler.wait_out()
+
     def act(self, action: dict, app: str, check_stale: bool = False) -> str:
         """Perform an action. With check_stale, a screen that changed after the AI's screenshot
         (a popup appeared during the ~1 s the AI took) is reported as "stale" and nothing is done."""
         t = action.get("type")
+        if t == "wait":
+            # The AI wants a fresher screen. Answering took it about 1 s already, so the time counts from
+            # the screenshot it saw: usually nothing is left to wait.
+            shot = self.settler.shot_at
+            self.settler.hold((shot if shot is not None else time.time()) + self.wait_s)
+            return "ok"
         if check_stale and t in STALE_CHECKED:
             try:
                 if self.settler.is_stale(self.grab):

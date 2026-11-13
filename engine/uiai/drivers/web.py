@@ -122,8 +122,6 @@ class WebDriver(Driver):
             p.mouse.wheel(dx, dy)
         elif t == "launch":
             p.goto(app, wait_until="domcontentloaded", timeout=30000)
-        elif t == "wait":
-            time.sleep(self.wait_s)
         elif t in ("none", "fail"):
             pass
         else:

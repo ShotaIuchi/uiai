@@ -41,6 +41,9 @@ class Settler:
         # stopped, which made the stale check re-ask the AI for nothing (phase 3)
         self.ignore_right = ignore_right
         self.acted = False
+        self.acted_at: float | None = None  # when the last screen action ended (None: none since the start/a reset)
+        self.shot_at: float | None = None   # when the last settled frame was grabbed
+        self.not_before = 0.0               # the next settled frame is grabbed no earlier than this (see hold)
         self._last = None              # cropped grayscale of the last settled frame
 
     # -- pixel comparison ---------------------------------------------------
@@ -62,17 +65,32 @@ class Settler:
     # -- public -------------------------------------------------------------
     def mark_acted(self) -> None:
         self.acted = True
+        self.acted_at = time.time()
 
     def forget(self) -> None:
         """Drop the reference frame (e.g. after a reset)."""
         self._last = None
         self.acted = False
+        self.acted_at = self.shot_at = None
+        self.not_before = 0.0
+
+    def hold(self, until: float) -> None:
+        """Grab the next settled frame no earlier than `until` (a time.time() value). The settling runs
+        meanwhile, so its time is not added on top. Of several holds, the latest one counts."""
+        self.not_before = max(self.not_before, until)
+
+    def wait_out(self) -> None:
+        """Sleep until a pending hold is over (when something else than a screenshot comes next, e.g. a reset)."""
+        left = self.not_before - time.time()
+        if left > 0:
+            time.sleep(left)
 
     def settle(self, grab: Callable[[], Image.Image]) -> Observation:
         want_change = self.acted and self._last is not None
         acted, self.acted = self.acted, False
         saw_change: bool | None = None if not acted or self._last is None else False
-        start, prev, polls, still = time.time(), None, 0, 0
+        begin = start = time.time()
+        prev, polls, still = None, 0, 0
         while True:
             t0 = time.time()
             im = grab()
@@ -88,17 +106,23 @@ class Settler:
             else:
                 still = still + 1 if prev is not None and self.same(prev, g) else 0
                 if still >= self.stable_frames or elapsed > self.change_timeout + self.stable_timeout:
-                    break
+                    if t0 >= self.not_before:
+                        break
+                    # Settled before the hold is over: look again once it is, without polling meanwhile. A
+                    # frame like this one then ends it; a changed one starts the stillness check over (with
+                    # stable_timeout counted from there).
+                    time.sleep(max(0.0, self.not_before - time.time()))
+                    start, still = time.time() - self.change_timeout, self.stable_frames - 1
                 prev = g
             time.sleep(max(0.0, self.poll_interval - (time.time() - t0)))
         if saw_change is False and self._last is not None and not self.same(self._last, g):
             saw_change = True  # changed slowly (below the change threshold per frame)
-        self._last = g
+        self._last, self.shot_at = g, t0
         out = io.BytesIO()
         im.save(out, "JPEG", quality=80)
         lo, hi = g.getextrema()
         return Observation(out.getvalue(), im.width, im.height, saw_change, hi <= 12,
-                           polls, round(time.time() - start, 2))
+                           polls, round(time.time() - begin, 2))
 
     def is_stale(self, grab: Callable[[], Image.Image]) -> bool:
         """True if the screen changed since the frame the AI judged (e.g. a popup appeared meanwhile)."""

@@ -175,8 +175,6 @@ class IOSDriver(Driver):
             r = self._simctl("launch", self.udid, app)
             if r.returncode != 0:
                 return f"error: 起動できない（{app}）: {(r.stderr or r.stdout).strip()[:150]}"
-        elif t == "wait":
-            time.sleep(self.wait_s)
         elif t in ("none", "fail"):
             pass
         else:

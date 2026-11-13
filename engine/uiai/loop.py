@@ -545,12 +545,12 @@ class ScenarioRunner:
                             pending = []
                             break
                         pending = []
+                    self.drv.wait_out()  # a `wait` of the last `do` is over before the reset
                     self.drv.reset(self.app, self.cfg)
                     self.section_first_do = True
                 for k, it in enumerate(sec.items):
                     if it.kind == "then":
-                        if it.wait:
-                            time.sleep(it.wait)
+                        self.drv.wait_after_action(it.wait)
                         pending.append(ThenState(it, self.steps[it.index].text))
                         continue
                     try:
@@ -576,8 +576,7 @@ class ScenarioRunner:
                         break
                     self.steps[it.index].status = "pass"
                     self.section_first_do = False
-                    if it.wait:
-                        time.sleep(it.wait)
+                    self.drv.wait_after_action(it.wait)
                     if self.res.stop_all:
                         stop = True
                         break
@@ -586,6 +585,7 @@ class ScenarioRunner:
                     self.judge_only(pending)
                 except StopScenario as e:
                     self.fail_pending(pending, str(e))
+            self.drv.wait_out()  # a `wait` of the last `do` (nothing judged after it) is still waited for
             if self.cfg.stop_app_after:
                 self.drv.stop_app(self.app)
         except Exception as e:  # noqa: BLE001 — an unexpected failure still ends as a recorded error

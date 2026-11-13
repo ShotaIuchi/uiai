@@ -629,3 +629,54 @@ def test_a_session_that_fails_to_close_does_not_lose_the_result(make_run, capsys
     res, *_ = make_run(BASIC, None, factory=lambda system: BadClose(script))
     assert res.status == "pass"
     assert "RuntimeError: close failed" in capsys.readouterr().err
+
+
+WAITS = """
+name: t
+app: "http://x"
+steps:
+  - id: A
+    actions:
+      - do: "open the app"
+        wait: 2
+      - then: "X is shown"
+        wait: 1
+      - do: "tap B"
+      - then: "Y is shown"
+"""
+
+
+def test_scenario_wait_goes_to_the_driver_before_the_next_screenshot_and_the_loop_does_not_sleep(make_run, clock):
+    def script(msg, n):
+        if n == 1:
+            return reply({"type": "launch"})
+        if n == 2:
+            return reply(verify=[v("X is shown")])
+        return reply({"type": "none"}, verify=[v("Y is shown")])
+
+    res, drv, _, _ = make_run(WAITS, script)
+    assert res.status == "pass"
+    # the `do`'s and the `then`'s wait both reach the driver before the screenshot that judges "X is shown"
+    assert drv.trace[:6] == ["reset", "observe", "act:launch", "wait:2", "wait:1", "observe"]
+    assert clock.now == 1000.0  # waiting is the driver's job (counted from the action, see test_wait.py)
+
+
+def test_wait_of_the_last_do_is_waited_out_before_a_reset_and_at_the_end(make_run):
+    y = """
+name: t
+app: "http://x"
+config: {on_failure: next_section, stop_app_after: true}
+steps:
+  - id: A
+    actions:
+      - do: "save"
+        wait: 3
+  - id: B
+    actions:
+      - do: "save again"
+        wait: 3
+"""
+    res, drv, _, _ = make_run(y, lambda msg, n: reply())
+    assert res.status == "pass"
+    assert drv.trace == ["reset", "observe", "act:tap", "wait:3", "wait_out", "reset",
+                       "observe", "act:tap", "wait:3", "wait_out", "stop_app"]

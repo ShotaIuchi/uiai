@@ -97,10 +97,7 @@ def resolve(app: Any, requested: str | None, available: dict[str, bool], ons: An
             raise PlatformError(f"{LABEL[requested]} の実行対象が見つからない（{_hint(requested)}）")
         _check_side(requested, side, available)
         return [requested]
-    if ons and all(ons):
-        main = [ons[0]]
-    else:
-        main = [p for p in cands if p not in side] or cands
+    main = _main(cands, ons)
     usable = [p for p in main if available.get(p)]
     if not usable:
         raise PlatformError(f"実行できる対象がない（候補: {'・'.join(LABEL[p] for p in main)}。"
@@ -111,6 +108,20 @@ def resolve(app: Any, requested: str | None, available: dict[str, bool], ons: An
         return usable
     raise PlatformError(f"複数のプラットフォームで実行できる（{'・'.join(LABEL[p] for p in usable)}）。"
                         "--platform で 1 つ選ぶか、all を指定する")
+
+
+def _main(cands: list[str], ons: list) -> list[str]:
+    """The candidates for the run itself, before looking at what is available (see resolve)."""
+    if ons and all(ons):
+        return [ons[0]]
+    side = {o for o in ons if o}
+    return [p for p in cands if p not in side] or cands
+
+
+def default_platform(app: Any, ons: Any) -> str | None:
+    """The platform a run without --platform is for, if only one is possible."""
+    main = _main(candidates(app), list(ons))
+    return main[0] if len(main) == 1 else None
 
 
 def _check_side(main: str, side: Any, available: dict[str, bool]) -> None:

@@ -169,12 +169,13 @@ def write_summary(results: list[tuple[ScenarioResult, Path]], run_dir: Path, exi
     fails = [(r, s) for r, _ in results for s in r.steps if s.status == "fail"]
     if fails:
         lines += ["", "## 失敗", ""]
-        lines += [f"- {r.name} @ {r.platform} / {s.section} / {s.kind}「{s.text}」: {s.reason}"
+        lines += [f"- {r.name} @ {r.platform} / {s.section}{_on(r, s.platform)} / {s.kind}「{s.text}」: {s.reason}"
                   + (f"（読み取り: {s.read}）" if s.read else "") for r, s in fails]
     skips = [(r, s) for r, _ in results for s in r.steps if s.status == "skip"]
     if skips:
         lines += ["", "## スキップ（optional の do が失敗した）", ""]
-        lines += [f"- {r.name} @ {r.platform} / {s.section} / do「{s.text}」: {s.reason}" for r, s in skips]
+        lines += [f"- {r.name} @ {r.platform} / {s.section}{_on(r, s.platform)} / do「{s.text}」: {s.reason}"
+                  for r, s in skips]
     errs = [r for r, _ in results if r.status == "error"]
     if errs:
         lines += ["", "## 実行エラー", ""] + [f"- {r.name} @ {r.platform}: {r.error}" for r in errs]
@@ -182,7 +183,8 @@ def write_summary(results: list[tuple[ScenarioResult, Path]], run_dir: Path, exi
         lines += ["", "## レポートを書けなかった", ""] + [f"- {name}: {reason}" for name, reason, _ in report_errors]
     warns = [(r, s, w) for r, _ in results for s in r.steps for w in s.warnings]
     if warns:
-        lines += ["", "## 警告", ""] + [f"- {r.name} @ {r.platform} / {s.section} / 「{s.text}」: {w}" for r, s, w in warns]
+        lines += ["", "## 警告", ""] + [f"- {r.name} @ {r.platform} / {s.section}{_on(r, s.platform)} / 「{s.text}」: {w}"
+                                         for r, s, w in warns]
     p = run_dir / "summary.md"
     p.write_text(redact.text("\n".join(lines) + "\n"), encoding="utf-8", errors="replace")
     return p

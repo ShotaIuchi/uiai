@@ -206,3 +206,101 @@ def test_dry_run_with_an_include_on_another_device(tmp_path, monkeypatch, capsys
                        '  - id: 結果\n    actions: [{do: "開く"}, {then: "承認済み"}]\n')
     assert cli.main(["run", str(p), "--dry-run"]) == 0
     assert "android で実行できる（`on` で web にも切り替える）" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- review fixes
+
+
+WEB_ONLY = 'name: 承認\napp: "https://admin.example.com"\nsteps:\n  - id: a\n    actions: [{do: "承認する"}, {then: "承認済み"}]\n'
+
+
+@pytest.mark.parametrize("entry,expected", [
+    ("  - include: approve.yaml\n", "このシナリオを実行するプラットフォーム（android）の対象がない"),
+    ("  - include: approve.yaml\n    on: android\n", "`app` に android の対象がない"),
+    ("  - include: approve.yaml\n    on: web\n", None),
+])
+def test_an_included_scenario_must_have_a_target_where_it_runs(tmp_path, entry, expected):
+    # it ran the admin page's steps on the phone app instead
+    write(tmp_path, "approve.yaml", WEB_ONLY)
+    p = write(tmp_path, "main.yaml", "name: 本体\napp: {android: com.example.app}\nsteps:\n" + entry
+              + '  - id: 本題\n    actions: [{do: "開く"}, {then: "x"}]\n')
+    found = codes(p)
+    assert found == ([] if expected is None else [("E044", next(m for _, m in found))])
+    assert expected is None or expected in found[0][1]
+
+
+def test_a_run_on_a_platform_an_included_scenario_lacks_is_not_made(tmp_path, monkeypatch, capsys):
+    from uiai import cli, platform
+
+    monkeypatch.setattr(platform, "probe", lambda serial=None, udid=None: {"android": True, "ios": True, "web": True})
+    monkeypatch.setenv("PW", "x")
+    p = main(tmp_path, '  - include: parts/login.yaml\n  - id: 本題\n    actions: [{do: "開く"}, {then: "x"}]\n')
+    p.write_text(p.read_text(encoding="utf-8").replace("{android: com.example.app}",
+                                                       "{android: com.example.app, ios: com.example.App}"),
+                 encoding="utf-8")
+    assert codes(p) == []  # Android is fine
+    assert cli.main(["run", str(p), "--dry-run", "--platform", "ios"]) == 2
+    out = capsys.readouterr().out
+    assert "`include` したセクション（ログイン/入力、ログイン/もう一度）のシナリオに ios の対象がない" in out
+    assert cli.main(["run", str(p), "--dry-run", "--platform", "android"]) == 0
+
+
+def test_a_file_that_is_not_utf8_is_reported_not_raised(tmp_path):
+    (tmp_path / "sjis.yaml").write_bytes("name: テスト\n".encode("shift_jis"))
+    p = main(tmp_path, '  - include: sjis.yaml\n  - id: a\n    actions: [{do: "開く"}, {then: "x"}]\n')
+    (code, msg), = codes(p)
+    assert code == "E040" and "UTF-8" in msg
+    assert [(i.code, "UTF-8" in i.message) for i in check_file(tmp_path / "sjis.yaml")] == [("E000", True)]
+
+
+def test_issues_point_at_the_place_in_the_file_not_in_the_expanded_steps(tmp_path):
+    write(tmp_path, "parts/login.yaml", LOGIN)
+    p = write(tmp_path, "main.yaml", "name: 本体\napp: {android: com.example.app}\nsteps:\n"
+              "  - include: parts/login.yaml\n  - include: parts/login.yaml\n"
+              '  - id: 本題\n    actions: [{do: "開く"}]\n')
+    where = {(i.code, i.where) for i in check_file(p)}
+    assert ("W002", "steps[2]（本題）") in where  # the 5th section once expanded
+    assert ("E011", "steps[1]（include: parts/login.yaml）") in where  # the include that brings the duplicate
+
+
+def test_internal_keys_cannot_be_written_in_a_scenario(tmp_path):
+    p = write(tmp_path, "s.yaml", 'name: n\napp: {android: com.example.app, web: "http://w"}\n_own_app: "http://w"\n'
+              'steps:\n  - id: a\n    _targets: {android: com.evil}\n    actions: [{do: "開く"}, {then: "x"}]\n')
+    sc = load(p)
+    assert sc.sections[0].targets == {} and sc.run_app == {"android": "com.example.app", "web": "http://w"}
+
+
+def test_each_file_is_read_once_per_load(tmp_path, monkeypatch):
+    from uiai import scenario
+
+    read = []
+    real = scenario._read_yaml
+    monkeypatch.setattr(scenario, "_read_yaml", lambda path: read.append(path.name) or real(path))
+    load(main(tmp_path, '  - include: parts/login.yaml\n  - id: a\n    actions: [{do: "開く"}, {then: "x"}]\n'))
+    assert sorted(read) == ["login.yaml", "main.yaml"]
+
+
+def test_another_app_on_the_same_device_is_announced_and_may_be_launched(tmp_path, make_run):
+    # launching the included scenario's app was warned as an unrequested relaunch
+    write(tmp_path, "parts/other.yaml", 'name: 別アプリ\napp: {android: com.example.other}\n'
+                                        'steps:\n  - id: a\n    actions: [{do: "設定を変更する"}, {then: "変わった"}]\n')
+    log: list[str] = []
+    phone = Recorder(log, "android")
+    ai = []
+
+    def factory(system):
+        ai.append(FakeAI(passing))
+        return ai[-1]
+
+    y = ('name: 本体\napp: {android: com.example.app}\nsteps:\n'
+         '  - id: 前\n    actions: [{do: "アプリを開く"}, {then: "開いた"}]\n'
+         f'  - include: {tmp_path}/parts/other.yaml\n'
+         '  - id: 後\n    actions: [{do: "結果を見る"}, {then: "見えた"}]\n')
+    res, *_ = make_run(y, None, driver=phone, platform="android", factory=factory)
+    assert res.status == "pass" and not any(s.warnings for s in res.steps)
+    msgs = ai[0].msgs
+    other = next(m for m in msgs if "設定を変更する" in m)
+    back = next(m for m in msgs if "結果を見る" in m)
+    assert other.startswith("The app under test is now com.example.other")
+    assert back.startswith("The app under test is now http://x")  # back to the scenario's own app
+    assert sum("The app under test is now" in m for m in msgs) == 2

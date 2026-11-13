@@ -68,8 +68,9 @@ class Device:
 
 def _devices(a: argparse.Namespace, jobs_per_platform: dict[str, int]) -> dict[str, list[Device]]:
     """Without --parallel: one per platform (as given, or auto-selected by the driver).
-    With --parallel: every given (or connected/booted) device, and --browsers browsers, but no more
-    devices than the platform has jobs (an idle browser or device would only be started for nothing)."""
+    With --parallel: every given (or connected/booted) device, and --browsers browsers. They are opened only
+    when used: the workers are as many as the platform has jobs, and a scenario run in order (`on`) takes the
+    first one that opens."""
     from .platform import android_serials, ios_udids
 
     out: dict[str, list[Device]] = {}
@@ -84,7 +85,6 @@ def _devices(a: argparse.Namespace, jobs_per_platform: dict[str, int]) -> dict[s
             n = max(1, a.browsers) if a.parallel else 1
             out[p] = [Device(p, f"web{i + 1}" if n > 1 else "web",
                              {"browser_path": a.browser_path, "headed": a.headed}) for i in range(n)]
-        out[p] = out[p][:max(1, jobs_per_platform[p])]
     return out
 
 
@@ -212,6 +212,14 @@ def cmd_run(a: argparse.Namespace) -> int:
             errored = True
             continue
         for p in platforms:
+            bad = sc.untargeted(p)
+            if bad:
+                reason = _untargeted(bad, p)
+                skipped.append((f"{sc.name} @ {p}", reason))
+                events.emit("error", scenario=sc.name, platform=p, file=str(f), reason=reason)
+                _out(f"✗ {sc.name} @ {p}: {reason}")
+                errored = True
+                continue
             out = run_dir / _slug(f"{f.stem}-{p}")
             n = 2
             while out.exists():
@@ -297,25 +305,32 @@ def cmd_run(a: argparse.Namespace) -> int:
         events.emit("error", scenario=job.sc.name, platform=job.platform, file=str(job.file), reason=reason)
         say(f"✗ {job.sc.name} @ {job.platform}: {reason}")
 
-    def pick(p: str) -> Device | None:
-        """The device of the platform for a job run in order: with --parallel, one that has not failed."""
-        return next((d for d in devices[p] if not d.error), devices[p][0] if devices[p] else None)
+    def take(p: str) -> tuple[Device | None, str]:
+        """The first device of the platform that opens (one that failed before is not tried again), or why
+        there is none."""
+        for d in devices[p]:
+            if open_driver(d):
+                in_order_devices.add(d)
+                return d, ""
+        errs = [d for d in devices[p] if d.error]
+        if len(devices[p]) == 1 and errs:
+            return None, errs[0].error
+        return None, "実行できる端末がない（" + ("; ".join(f"{d.label}: {d.error}" for d in errs) or "端末なし") + "）"
 
     def run_in_order(job: Job) -> None:
         nonlocal errored
-        dev, sides = pick(job.platform), {p: pick(p) for p in job.sides}
         started.add(job.no)
-        if dev is None or None in sides.values():
-            skip(job, "実行できる端末がない（端末なし）")
+        dev, why = take(job.platform)
+        sides: dict[str, Device] = {}
+        for p in job.sides if dev else ():
+            sides[p], side_why = take(p)
+            if sides[p] is None:
+                why = f"`on: {p}` の {LABEL[p]}: {side_why}"
+                break
+        if why:
+            skip(job, why)
             errored = True
             return
-        for d in (dev, *sides.values()):
-            in_order_devices.add(d)
-            if not open_driver(d):
-                what = "" if d is dev else f"`on: {d.platform}` の {LABEL[d.platform]}: "
-                skip(job, what + d.error)
-                errored = True
-                return
         run_job(job, dev, sides)
 
     interrupted = False
@@ -418,6 +433,13 @@ def cmd_run(a: argparse.Namespace) -> int:
     return code
 
 
+def _untargeted(sections: list[str], platform: str) -> str:
+    """Why a run on the platform is not made: included sections would run with no target of their own."""
+    names = "、".join(sections[:3]) + ("ほか" if len(sections) > 3 else "")
+    return (f"`include` したセクション（{names}）のシナリオに {platform} の対象がない"
+            "（`include` に `on` で実行するデバイスを書くか、--platform で別のプラットフォームを選ぶ）")
+
+
 def _dry_run(files: list[Path], overrides: dict[str, str], a: argparse.Namespace) -> int:
     """Report what `run` would do (platforms, missing variables) without touching devices or the AI."""
     from .platform import PlatformError, probe, resolve
@@ -439,6 +461,12 @@ def _dry_run(files: list[Path], overrides: dict[str, str], a: argparse.Namespace
             platforms = resolve(sc.run_app, a.platform, available, [s.on for s in sc.sections])
         except PlatformError as e:
             _out(f"✗ {f}（{sc.name}）: {e}")
+            ok = False
+            continue
+        bad = [(p, sc.untargeted(p)) for p in platforms if sc.untargeted(p)]
+        if bad:
+            for p, sections in bad:
+                _out(f"✗ {f}（{sc.name}）@ {p}: {_untargeted(sections, p)}")
             ok = False
             continue
         if missing:

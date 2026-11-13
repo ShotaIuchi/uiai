@@ -141,6 +141,10 @@ class Scenario:
     def secret_names(self) -> set[str]:
         return {n for n, v in self.variables.items() if v.secret}
 
+    def untargeted(self, platform: str) -> list[str]:
+        """Included sections that would run, in a run on `platform`, where their own scenario has no target."""
+        return [s.id for s in self.sections if s.targets and (s.on or platform) not in s.targets]
+
     @property
     def on_platforms(self) -> set[str]:
         """Platforms named by sections' `on`."""
@@ -174,36 +178,52 @@ def _construct_mapping(loader: _Loader, node: yaml.MappingNode, deep: bool = Fal
 _Loader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_mapping)
 
 
-def _read_scenario(path: Path) -> tuple[Any, list[tuple[Any, int]], list["Issue"]]:
-    """The scenario with its `include`s expanded (recursively), its duplicate keys, and the include problems."""
+@dataclass
+class _Step:
+    """Where an entry of the expanded `steps` comes from (for messages), and the targets of an included one."""
+    where: str                    # its place in the file: `steps[i]`, or the `include` that brought it
+    targets: dict[str, str] = field(default_factory=dict)  # included: {platform: target} of its own scenario
+    scenario: str = ""            # included: the name of the scenario it is written in
+
+
+@dataclass
+class _Read:
+    data: Any                     # with the `include`s expanded
+    duplicates: list[tuple[Any, int]]
+    steps: list[_Step]            # one per entry of data["steps"]
+    own_app: Any                  # the file's own `app` (data["app"] also has the platforms includes add)
+    issues: list["Issue"]         # problems with the `include`s
+
+
+def _read_scenario(path: Path, parents: tuple[Path, ...] = ()) -> _Read:
+    """Read a scenario and replace each `include` entry of `steps` with the sections of that scenario: ids
+    prefixed with the entry's `id` (else the scenario's name) and `/`, the entry's `on` given to those without
+    one, and that scenario's targets kept for them. Its variables and platforms are added where this scenario
+    has none; its config is not used. An included scenario must be valid on its own.
+    Raises yaml.YAMLError, UnicodeDecodeError or OSError if this file cannot be read."""
+    path = path.resolve()
     data, dups = _read_yaml(path)
     issues: list[Issue] = []
-    return _flatten(data, path.resolve(), (path.resolve(),), issues), dups, issues
-
-
-def _flatten(data: Any, path: Path, stack: tuple[Path, ...], issues: list["Issue"]) -> Any:
-    """Replace each `include` entry of `steps` with the sections of that scenario: ids prefixed with the entry's
-    `id` (else the scenario's name) and `/`, the entry's `on` given to those without one, and the scenario's
-    targets kept on them. Its variables and platforms are added where this scenario has none; its config is not
-    used. An included scenario must be valid on its own."""
-    if not isinstance(data, dict) or not isinstance(data.get("steps"), list) or not any(
-            isinstance(s, dict) and "include" in s for s in data["steps"]):
-        return data
+    raw = data.get("steps") if isinstance(data, dict) else None
+    own_app = data.get("app") if isinstance(data, dict) else None
+    if not isinstance(raw, list) or not any(isinstance(s, dict) and "include" in s for s in raw):
+        return _Read(data, dups, [_Step(f"steps[{i}]") for i in range(len(raw or []))], own_app, issues)
     from .platform import candidates, target
 
     def err(code: str, msg: str, where: str) -> None:
         issues.append(Issue(code, "error", msg, where))
 
     data = dict(data)
-    app = data.get("app")
-    merged_app = None if not isinstance(app, (str, dict)) or not app else (
-        dict(app) if isinstance(app, dict) else {p: app for p in candidates(app)})
+    merged_app = None if not isinstance(own_app, (str, dict)) or not own_app else (
+        dict(own_app) if isinstance(own_app, dict) else {p: own_app for p in candidates(own_app)})
     variables = data.get("variables") or {}
     variables = dict(variables) if isinstance(variables, dict) else None
     steps: list = []
-    for i, sec in enumerate(data["steps"]):
+    metas: list[_Step] = []
+    for i, sec in enumerate(raw):
         if not (isinstance(sec, dict) and "include" in sec):
             steps.append(sec)
+            metas.append(_Step(f"steps[{i}]"))
             continue
         inc = sec["include"]
         where = f"steps[{i}]（include: {inc}）"
@@ -218,49 +238,55 @@ def _flatten(data: Any, path: Path, stack: tuple[Path, ...], issues: list["Issue
             err("E017", f"`on` は {'/'.join(PLATFORMS)} のいずれか", where)
             continue
         sub_path = (path.parent / inc).resolve()
-        if sub_path in stack:
-            err("E041", "`include` が循環している（" + " → ".join(p.name for p in (*stack, sub_path)) + "）", where)
+        if sub_path in (*parents, path):
+            err("E041", "`include` が循環している（" + " → ".join(p.name for p in (*parents, path, sub_path)) + "）",
+                where)
             continue
         try:
-            sub, sub_dups = _read_yaml(sub_path)
+            sub = _read_scenario(sub_path, (*parents, path))
         except yaml.YAMLError as e:
             err("E040", f"`include` 先の YAML の構文エラー: {e}", where)
+            continue
+        except UnicodeDecodeError as e:
+            err("E040", f"`include` 先を UTF-8 として読めない: {e}", where)
             continue
         except OSError as e:
             err("E040", f"`include` 先を読み込めない: {e}", where)
             continue
-        sub_issues: list[Issue] = []
-        sub = _flatten(sub, sub_path, (*stack, sub_path), sub_issues)
-        bad = [x for x in sub_issues + check_data(sub, sub_dups) if x.level == "error"]
+        bad = [x for x in sub.issues + check_data(sub.data, sub.duplicates, sub.steps, sub.own_app)
+               if x.level == "error"]
         if bad:
             err("E042", "`include` 先のシナリオにエラーがある: " + "; ".join(
                 f"{x.code} {x.message}" + (f"（{x.where}）" if x.where else "") for x in bad), where)
             continue
-        prefix = str(sec.get("id") or sub["name"])
-        sub_targets = {p: target(sub["app"], p, sub_path.parent) for p in candidates(sub["app"])}
+        name, app = str(sub.data["name"]), sub.data["app"]
+        prefix = str(sec.get("id") or name)
+        sub_targets = {p: target(app, p, sub_path.parent) for p in candidates(app)}
         if merged_app is not None:
             for p, t in sub_targets.items():
                 merged_app.setdefault(p, t)
         if variables is not None:
-            for n, spec in (sub.get("variables") or {}).items():
+            for n, spec in (sub.data.get("variables") or {}).items():
                 if n not in variables:
                     variables[n] = spec
                 elif parse_variable(n, spec).secret and not parse_variable(n, variables[n]).secret:
                     variables[n] = _as_secret(variables[n])  # secret if either side says so
-        for s in sub["steps"]:
-            s = dict(s, id=f"{prefix}/{s['id']}", _targets={**sub_targets, **s.get("_targets", {})})
+        for s, m in zip(sub.data["steps"], sub.steps):
+            s = dict(s, id=f"{prefix}/{s['id']}")
             if isinstance(s.get("replay"), dict):
                 r = s["replay"]
                 s["replay"] = dict(r, **{k: f"{prefix}/{r[k]}" for k in ("from", "to")})
             if "on" not in s and "on" in sec:
                 s["on"] = sec["on"]
             steps.append(s)
+            # sections it included itself keep their own scenario's targets
+            metas.append(_Step(where, {**sub_targets, **m.targets}, m.scenario or name))
     data["steps"] = steps
     if merged_app is not None:
-        data["_own_app"], data["app"] = data.get("_own_app", app), merged_app
+        data["app"] = merged_app
     if variables is not None:
         data["variables"] = variables
-    return data
+    return _Read(data, dups, metas, own_app, issues)
 
 
 def _as_secret(spec: Any) -> Any:
@@ -297,8 +323,13 @@ def is_web_target(s: str) -> bool:
             or _strip_query(s).lower().endswith((".html", ".htm")))
 
 
-def check_data(data: Any, duplicates: list[tuple[Any, int]] | None = None) -> list[Issue]:
-    """Validate a parsed scenario. Rule IDs follow skills/scenario-check (E0xx/W0xx)."""
+def check_data(data: Any, duplicates: list[tuple[Any, int]] | None = None, origins: list[_Step] | None = None,
+               own_app: Any = None) -> list[Issue]:
+    """Validate a parsed scenario. Rule IDs follow skills/scenario-check (E0xx/W0xx).
+    origins / own_app: from _read_scenario, when `include`s were expanded (where each step comes from, and
+    the file's own `app`)."""
+    from .platform import candidates, default_platform
+
     issues: list[Issue] = []
 
     def err(code: str, msg: str, where: str = "") -> None:
@@ -377,9 +408,15 @@ def check_data(data: Any, duplicates: list[tuple[Any, int]] | None = None) -> li
             warn("W006", f"変数 `{name}` は値がなく、実行時に入力が必要（CI では実行されない）")
 
     # steps
+    if origins is None or len(origins) != len(steps):
+        origins = [_Step(f"steps[{i}]") for i in range(len(steps))]
+    run_app = own_app if own_app is not None else app
+    run_cands = candidates(run_app) if isinstance(run_app, (str, dict)) and run_app else []
+    ons = [s.get("on") if isinstance(s, dict) and s.get("on") in PLATFORMS else None for s in steps]
+    included: set[tuple[str, str]] = set()  # E044 once per include
     ids: list[str] = []
     for i, sec in enumerate(steps):
-        where = f"steps[{i}]"
+        where = origins[i].where
         if not isinstance(sec, dict):
             err("E005", "ステップがマッピングではない", where)
             continue
@@ -393,17 +430,33 @@ def check_data(data: Any, duplicates: list[tuple[Any, int]] | None = None) -> li
             ids.append(sid)
         if "actions" not in sec and "replay" not in sec:
             err("E006", "`actions` がない", where)
+        on_ok = True
         if "on" in sec:
             if sec["on"] not in PLATFORMS:
                 err("E017", f"`on` は {'/'.join(PLATFORMS)} のいずれか", where)
-            elif app and not _app_covers(app, sec["on"]):
+                on_ok = False
+            elif app and sec["on"] not in candidates(app):
                 err("E018", f"`on: {sec['on']}` のセクションがあるが、`app` に {sec['on']} の対象がない", where)
+                on_ok = False
+        o = origins[i]
+        if o.targets and on_ok:  # an included section runs with its own scenario's targets: they must cover it
+            on = sec.get("on")
+            if on in PLATFORMS and on not in o.targets:
+                msg = f"`include` した「{o.scenario}」の `app` に {on} の対象がない"
+            elif on is None and run_cands and not set(run_cands) & set(o.targets):
+                msg = (f"`include` した「{o.scenario}」の `app` に、このシナリオを実行するプラットフォーム"
+                       f"（{'/'.join(run_cands)}）の対象がない。`include` に `on` で実行するデバイスを書く")
+            else:
+                msg = ""
+            if msg and (where, msg) not in included:
+                included.add((where, msg))
+                err("E044", msg, where)
 
     used_vars: set[str] = set()
     for i, sec in enumerate(steps):
         if not isinstance(sec, dict):
             continue
-        where = f"steps[{i}]（{sec.get('id', '')}）"
+        where = f"{origins[i].where}（{sec.get('id', '')}）"
         replay = sec.get("replay")
         if replay is not None:
             if not isinstance(replay, dict):
@@ -417,8 +470,11 @@ def check_data(data: Any, duplicates: list[tuple[Any, int]] | None = None) -> li
                 if f in ids and t in ids and ids.index(f) > ids.index(t):
                     err("E022", f"`replay` の from 「{f}」が to 「{t}」より後にある", where)
                 elif f in ids and t in ids:
-                    ons = {str(s.get("id")): s.get("on") for s in steps if isinstance(s, dict)}
-                    other = [x for x in ids[ids.index(f): ids.index(t) + 1] if ons.get(x) != sec.get("on")]
+                    # no `on` = the run's platform: the same device as `on: X` when the run is sure to be on X
+                    run = default_platform(run_app, ons) if run_cands else None
+                    on_of = {str(s.get("id")): (s.get("on") or run) for s in steps if isinstance(s, dict)}
+                    mine = sec.get("on") or run
+                    other = [x for x in ids[ids.index(f): ids.index(t) + 1] if on_of.get(x) != mine]
                     if other:
                         warn("W011", f"`replay` の範囲に `on` が違うセクション（{'、'.join(other)}）がある。"
                              "再実行はこのセクションのデバイスで行う", where)
@@ -496,13 +552,6 @@ def check_data(data: Any, duplicates: list[tuple[Any, int]] | None = None) -> li
     return issues
 
 
-def _app_covers(app: Any, platform: str) -> bool:
-    """Whether `app` names a target for the platform (as platform.candidates reads it)."""
-    if isinstance(app, dict):
-        return platform in app
-    return platform == "web" if is_web_target(str(app)) else platform in ("android", "ios")
-
-
 def _check_app(app: Any, err) -> None:
     if isinstance(app, str):
         if not (is_web_target(app) or PACKAGE_RE.match(app)):
@@ -551,13 +600,19 @@ def _find_replay_cycle(steps: list) -> list[str] | None:
 
 
 def check_file(path: Path) -> list[Issue]:
+    return _check(path)[0]
+
+
+def _check(path: Path) -> tuple[list[Issue], _Read | None]:
     try:
-        data, dups, issues = _read_scenario(path)
+        r = _read_scenario(path)
     except yaml.YAMLError as e:
-        return [Issue("E000", "error", f"YAML の構文エラー: {e}")]
+        return [Issue("E000", "error", f"YAML の構文エラー: {e}")], None
+    except UnicodeDecodeError as e:
+        return [Issue("E000", "error", f"UTF-8 として読めない: {e}")], None
     except OSError as e:
-        return [Issue("E000", "error", f"読み込めない: {e}")]
-    return issues + check_data(data, dups)
+        return [Issue("E000", "error", f"読み込めない: {e}")], None
+    return r.issues + check_data(r.data, r.duplicates, r.steps, r.own_app), r
 
 
 # --------------------------------------------------------------------------- #
@@ -597,7 +652,7 @@ def _parse_config(cfg: dict) -> Config:
     return c
 
 
-def _expand(steps: list[dict], cfg: Config) -> list[Section]:
+def _expand(steps: list[dict], cfg: Config, origins: list[_Step]) -> list[Section]:
     ids = [str(s["id"]) for s in steps]
     by_id = {str(s["id"]): s for s in steps}
 
@@ -626,7 +681,7 @@ def _expand(steps: list[dict], cfg: Config) -> list[Section]:
 
     sections: list[Section] = []
     n = 0
-    for sec in steps:
+    for sec, origin in zip(steps, origins):
         sid = str(sec["id"])
         items = replay_dos(sec, sid, (sid,))
         items += [make(a, "do" if "do" in a else "then", sid, sid) for a in sec.get("actions") or []]
@@ -634,22 +689,21 @@ def _expand(steps: list[dict], cfg: Config) -> list[Section]:
             it.index = n
             n += 1
         sections.append(Section(sid, items, on=sec.get("on") if sec.get("on") in PLATFORMS else None,
-                                targets=dict(sec.get("_targets") or {})))
+                                targets=dict(origin.targets)))
     return sections
 
 
 def load(path: Path) -> Scenario:
     """Load and validate a scenario. Raises ScenarioError if it has errors."""
-    issues = check_file(path)
-    if any(i.level == "error" for i in issues):
+    issues, r = _check(path)
+    if r is None or any(i.level == "error" for i in issues):
         raise ScenarioError(path, issues)
-    data, _, _ = _read_scenario(path)
+    data = r.data
     cfg = _parse_config(data.get("config") or {})
     variables = {n: parse_variable(n, s) for n, s in (data.get("variables") or {}).items()}
-    sections = _expand(data["steps"], cfg)
+    sections = _expand(data["steps"], cfg, r.steps)
     return Scenario(path=path, name=str(data["name"]), app=data["app"], config=cfg, variables=variables,
-                    sections=sections, warnings=[i for i in issues if i.level == "warning"],
-                    own_app=data.get("_own_app"))
+                    sections=sections, warnings=[i for i in issues if i.level == "warning"], own_app=r.own_app)
 
 
 def discover(paths: list[str]) -> list[Path]:

@@ -45,6 +45,11 @@ STALE_LABEL = "未実行（AI の判断後に画面が変わったため撮り�
 ROTATE_AT_SECTION = 50_000   # input tokens of the last call
 ROTATE_ANYWHERE = 100_000
 HISTORY_STEPS = 12           # earlier steps carried over to a new conversation
+# What each device keeps while the scenario is on another one (`on`): its conversation, the app in use, whether
+# its next `do` is the first since it was (re)set or its app changed (a launch is then not a detour), and what
+# its next message must tell the AI first.
+DEVICE_STATE = ("ai", "system", "session_id", "session_calls", "session_tokens", "session_section", "app",
+                "section_first_do", "notice")
 
 STATUS_LABEL = {"pass": "合格", "pass_warn": "警告付き合格", "fail": "不合格", "error": "実行エラー",
                 "skipped": "未実行（スキップ）", "not_run": "未実行", "skip": "スキップ（optional）"}
@@ -126,8 +131,8 @@ class ScenarioRunner:
         self.targets = {platform: (driver, target), **{p: o for p, o in (others or {}).items() if p != platform}}
         self.multi = len(self.targets) > 1
         self.cur: str | None = None
-        self.parked: dict[str, tuple] = {}  # the conversations of the devices not in use
-        self.fresh = False  # just switched to a device not used yet: tell the AI its app is not open
+        self.parked: dict[str, dict] = {}  # DEVICE_STATE of the devices not in use
+        self.notice = ""  # to put before the next message (a device just switched to, another app)
         self.ai_factory, self.values, self.out = ai_factory, values, out_dir
         self.rejudge_factory, self.rejudge_model = rejudge_factory, rejudge_model
         self.events, self.redact, self.print = events, redactor, printer
@@ -160,8 +165,8 @@ class ScenarioRunner:
         return render(it.raw, self.values, self.secrets)
 
     def ev(self, type_: str, **kw) -> None:
-        if self.multi and self.cur and self.cur != self.platform:
-            kw.setdefault("device", self.cur)  # a section with `on`: where it happened
+        if self.multi and self.cur and self.cur != self.platform and type_ in ("fail", "skip", "warning", "error"):
+            kw.setdefault("device", self.cur)  # a step in a section with `on`: where it happened
         self.events.emit(type_, scenario=self.sc.name, platform=self.platform, file=str(self.sc.path), **kw)
 
     def elapsed(self) -> float:
@@ -234,31 +239,42 @@ class ScenarioRunner:
         one left is parked for when the scenario comes back to that device."""
         app = app or self.targets[platform][1]
         if platform == self.cur:
-            if app != self.app:
-                self.print(f"  → {app}")
-            self.app = app
+            self.use_app(app)
             return
-        if self.cur is not None:
+        switching = self.cur is not None
+        if switching:
             self.drv.wait_out()  # a `wait` of the last `do` there is over before going on elsewhere
-            self.parked[self.cur] = (self.ai, self.system, self.session_id, self.session_calls,
-                                     self.session_tokens, self.session_section)
+            self.parked[self.cur] = {k: getattr(self, k) for k in DEVICE_STATE}
             self.print(f"  ⇄ {platform} に切り替え（{app}）")
         self.cur = platform
-        self.drv, self.app = self.targets[platform][0], app
+        self.drv = self.targets[platform][0]
         if platform in self.parked:
-            self.ai, self.system, self.session_id, self.session_calls, self.session_tokens, \
-                self.session_section = self.parked.pop(platform)
+            for k, v in self.parked.pop(platform).items():
+                setattr(self, k, v)
             self.carry_history = True  # what was done on the other device meanwhile
+            self.use_app(app)
             return
-        # A blank page did not tell the AI that the admin page of "open the admin page and ..." was not open yet:
-        # it waited and failed (real run, Web after Android).
-        self.fresh = self.ai is not None
         self.ai = None  # the conversation of the device left is parked, not closed
         self.system = system_prompt(self.drv.description, self.drv.iw, self.drv.ih,
                                     self.cfg.interrupts.allow, sorted(self.secrets),
                                     optional=any(it.optional for it in self.items))
         self.open_session()
-        self.section_first_do = True
+        self.app, self.section_first_do = app, True
+        # A blank page did not tell the AI that the admin page of "open the admin page and ..." was not open yet:
+        # it waited and failed (real run, Web after Android).
+        self.notice = (f"You have just switched to {self.drv.description} (`on: {platform}`). It was reset before "
+                       "the scenario started and has not been used since: the app under test is not open yet. Use "
+                       "\"launch\" to open it if the step needs it.\n\n") if switching else ""
+
+    def use_app(self, app: str) -> None:
+        """Go on with another app on the same device (sections of an included scenario, or back from them)."""
+        if app == self.app:
+            return
+        self.print(f"  → {app}")
+        self.app = app
+        self.section_first_do = True  # launching it is not a detour
+        self.notice = (f"The app under test is now {app} (the next steps come from another scenario). It may not "
+                       "be open: use \"launch\" to open it if the step needs it.\n\n")
 
     # ------------------------------------------------------------------ AI call
     def observe(self):
@@ -278,11 +294,8 @@ class ScenarioRunner:
     def ask(self, a: Ask, obs, kind: str, step_index: int | None) -> tuple[dict, dict]:
         self.check_time()
         msg = build_message(a)
-        if self.fresh:
-            msg = (f"You have just switched to {self.drv.description} (`on: {self.cur}`). It was reset before the "
-                   "scenario started and has not been used since: the app under test is not open yet. Use \"launch\" "
-                   "to open it if the step needs it.\n\n" + msg)
-            self.fresh = False
+        if self.notice:
+            msg, self.notice = self.notice + msg, ""
         if self.carry_history:
             msg = self.history_text() + msg
             self.carry_history = False
@@ -703,7 +716,7 @@ class ScenarioRunner:
             self.ev("error", reason=self.res.error)
             self.print(f"  ✗ 実行エラー: {self.res.error}")
         finally:
-            for ai in [self.ai, *(p[0] for p in self.parked.values())]:
+            for ai in [self.ai, *(p["ai"] for p in self.parked.values())]:
                 if ai is not None:
                     try:
                         ai.close()

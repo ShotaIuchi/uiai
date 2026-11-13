@@ -343,3 +343,85 @@ def test_only_a_plain_on_key_is_read_as_on(tmp_path):
     sc = load(p)
     assert sc.config.strict is True and [s.on for s in sc.sections] == ["web", "web"]
     assert [it.strict for it in sc.items] == [False, True]
+
+
+# ---------------------------------------------------------------- review fixes
+
+
+def test_the_note_about_a_new_device_waits_for_that_device(make_run):
+    # with no call on the Web, the phone's next message said it had just been switched to and was not open
+    main, web, _ = devices()
+    ais = []
+
+    def factory(system):
+        ais.append(FakeAI(passing))
+        return ais[-1]
+
+    y = SWITCH.replace('''      - do: "open the admin page"
+      - then: "the request is listed"''', "      []").replace("    actions:\n      []", "    actions: []") + (
+        '  - id: D\n    on: web\n    actions:\n      - do: "open the admin page"\n      - then: "listed"\n')
+    res, *_ = make_run(y, None, driver=main, platform="android", others={"web": (web, "http://w")}, factory=factory)
+    phone, browser = ais
+    assert not any("just switched" in m for m in phone.msgs)
+    assert "just switched to a web browser" in browser.msgs[0] and "open the admin page" in browser.msgs[0]
+
+
+def test_each_device_keeps_whether_its_next_do_may_launch(make_run):
+    # the Web section had no `do`: back on the phone, an unrequested relaunch must still be warned
+    main, web, _ = devices()
+    y = SWITCH.replace('''      - do: "open the admin page"
+      - then: "the request is listed"''', '      - then: "the admin page is shown"').replace(
+        "open the result", "check the result")  # ("open" asks for a launch)
+
+    def script(msg, n):
+        r = passing(msg, n)
+        if "check the result" in msg:
+            r["action"] = {"type": "launch"}
+        return r
+
+    res, *_ = make_run(y, script, driver=main, platform="android", others={"web": (web, "http://w")})
+    assert [w for s in res.steps for w in s.warnings] == ["アプリを起動し直した（`do` は起動を指示していない）"]
+
+
+def test_the_end_of_a_scenario_is_not_tagged_with_the_last_device(make_run, tmp_path):
+    from uiai.report import write_summary
+
+    main, web, _ = devices()
+    y = SWITCH.replace("  - id: C\n", "  - id: C\n    on: web\n")
+
+    def script(msg, n):
+        if "open the result" in msg:
+            return reply({"type": "fail", "reason": "gone"}, verify=[v("the request is listed")])
+        return passing(msg, n)
+
+    res, _, _, events = make_run(y, script, driver=main, platform="android", others={"web": (web, "http://w")})
+    end = next(e for e in events if e["type"] == "scenario_end")
+    assert "device" not in end and next(e for e in events if e["type"] == "fail")["device"] == "web"
+    out = tmp_path / "rep"
+    out.mkdir()
+    summary = write_summary([(res, out)], tmp_path, 1, [], Redactor([])).read_text(encoding="utf-8")
+    assert "- t @ android / C @ web / do「open the result」: gone" in summary
+
+
+@pytest.mark.parametrize("app,warned", [
+    ("{android: com.example.app}", False),            # the run can only be on Android: the same device
+    ('{android: com.example.app, web: "http://w"}', True),  # it runs on the Web by default
+])
+def test_replay_warns_only_when_the_device_differs(tmp_path, app, warned):
+    p = tmp_path / "s.yaml"
+    p.write_text(f"name: n\napp: {app}\nsteps:\n  - id: A\n    on: android\n    actions: [{{do: a}}, {{then: b}}]\n"
+                 "  - id: C\n    replay: {from: A, to: A}\n    actions: [{then: c}]\n", encoding="utf-8")
+    assert any(i.code == "W011" for i in check_file(p)) == warned
+
+
+def test_parallel_takes_the_next_device_when_one_cannot_start(cli_env, capsys, monkeypatch, tmp_path):
+    scenario, run, made = cli_env
+    monkeypatch.setattr(platform, "android_serials", lambda: ["BAD", "A"])
+    f = tmp_path / "t.yaml"
+    f.write_text('name: t\napp: {android: "com.example.app", web: "http://w"}\nsteps:\n'
+                 '  - id: a\n    actions:\n      - do: "開く"\n'
+                 '  - id: b\n    on: android\n    actions:\n      - do: "見る"\n', encoding="utf-8")
+    code = run(str(f), "--parallel")
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert [(d.p, d.label, len(d.acts)) for d in made] == [("web", "web", 1), ("android", "A", 1)]

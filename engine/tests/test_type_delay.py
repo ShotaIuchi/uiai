@@ -164,13 +164,25 @@ def test_android_key_table_covers_printable_ascii_on_the_us_layout():
         (29, 0), (54, 1), (7, 0), (16, 0), (7, 1), (16, 1), (68, 1), (68, 0), (73, 1), (73, 0), (75, 1), (75, 0)]
 
 
-def test_android_pastes_japanese_at_once_and_keeps_adb_without_a_delay(clock):
+def test_android_types_an_ascii_secret_instead_of_pasting_it(clock):
+    # pasted text shows for a moment in the clipboard notice and the keyboard's suggestions
+    d, u2, adb = android(0)
+    d.act({"type": "input", "text": "pw 1$", "secret": True}, "app")
+    d.act({"type": "input", "text": "秘密", "secret": True}, "app")  # cannot be typed: pasted
+    assert adb == [["shell", "input text 'pw%s1$'"]] and u2.sent == ["秘密"]  # quoted for the device's shell
+    d, u2, adb = android(0.1)
+    d.act({"type": "input", "text": "Pw", "secret": True}, "app")  # with a delay, key events as for any text
+    assert adb == [] and u2.sent == [(44, 1), (51, 0)]
+
+
+def test_android_pastes_without_a_delay_and_non_ascii_always(clock):
+    d, u2, adb = android(0)
+    d.act({"type": "input", "text": "a b!"}, "app")
+    d.act({"type": "input", "text": ""}, "app")  # nothing to paste: the clipboard is left alone
+    assert u2.sent == ["a b!"] and adb == [] and clock.now == 1000
     d, u2, adb = android(0.1)
     d.act({"type": "input", "text": "東京 tower"}, "app")
     assert u2.sent == ["東京 tower"] and adb == []
-    d, u2, adb = android(0)
-    d.act({"type": "input", "text": "a b"}, "app")
-    assert u2.sent == [] and adb == [["shell", "input text a%sb"]]
 
 
 # ---------------------------------------------------------------- iOS simulator

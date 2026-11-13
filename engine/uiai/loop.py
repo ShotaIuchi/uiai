@@ -399,8 +399,12 @@ class ScenarioRunner:
         return True
 
     def fill(self, act: dict) -> dict:
+        """The action for the driver: secret placeholders replaced by the values. An input that holds a secret
+        is marked `secret`, so that the driver can keep it off the clipboard (Android)."""
         if act.get("type") == "input" and act.get("text"):
-            return dict(act, text=fill_secrets(str(act["text"]), self.values, self.secrets))
+            text = str(act["text"])
+            filled = fill_secrets(text, self.values, self.secrets)
+            return dict(act, text=filled, **({"secret": True} if filled != text else {}))
         return act
 
     def judge_only(self, pending: list[ThenState]) -> None:

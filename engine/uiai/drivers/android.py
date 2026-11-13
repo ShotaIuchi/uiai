@@ -1,10 +1,16 @@
 """Android via adb, screenshot only (no UI tree).
 
-ASCII text goes through `adb shell input text`, which cannot type anything else. Other text
-(Japanese...) is pasted into the focused field by uiautomator2: its server (u2.jar, started
-with app_process, no app installed) sets the clipboard and pastes. Side effects: the device
-clipboard is overwritten, and Android may show a "pasted from your clipboard" toast. If that
-route fails, uiautomator2 installs its own input method app (com.github.uiautomator).
+Text is pasted into the focused field by uiautomator2: its server (u2.jar, started with
+app_process, no app installed) sets the clipboard and pastes. adb alone cannot do it: the shell
+has no clipboard command, and `adb shell input text` fails on anything but ASCII. Side effects:
+the device clipboard is overwritten, and Android may show a "pasted from your clipboard" toast.
+If that route fails, uiautomator2 installs its own input method app (com.github.uiautomator).
+The first input connects to uiautomator2 (~3.4 s); later ones reuse the connection.
+
+Right after a paste, Android shows a clipboard notice and Gboard offers the pasted text in its
+suggestion strip, for about a second: a screenshot then would carry the text to the AI. So ASCII
+text holding a secret value is typed with `adb shell input text` instead (non-ASCII secrets can
+only be pasted).
 
 With a typing delay (config.type_delay), ASCII is typed one key event at a time through
 uiautomator2 (key code + shift, US layout), since `input keyevent --delay` cannot hold shift and
@@ -105,7 +111,7 @@ class AndroidDriver(Driver):
 
     def _u2_device(self) -> Any:
         if self._u2 is None:
-            import uiautomator2  # only needed for non-ASCII input and typing delays
+            import uiautomator2  # only needed for text input
 
             self._u2 = uiautomator2.connect(self.serial)
         return self._u2
@@ -143,12 +149,12 @@ class AndroidDriver(Driver):
             text = str(action.get("text", ""))
             if self._tap(action):  # without coordinates: type into the focused field
                 time.sleep(0.3)
-            if not text.isascii():
-                self._paste_text(text)  # all at once, whatever the typing delay
-            elif self.type_delay > 0:
-                self._type_keys(text)
-            else:
+            if self.type_delay > 0 and text.isascii():
+                self._type_keys(text)  # key events: nothing goes through the clipboard
+            elif action.get("secret") and text.isascii():
                 self._adb(["shell", "input text " + shlex.quote(text.replace(" ", "%s"))])
+            elif text:
+                self._paste_text(text)  # all at once (non-ASCII text whatever the typing delay)
         elif t == "key":
             key = str(action.get("key", "")).strip()
             code = KEYS.get(key.lower()) or (key if key.isdigit() or key.upper().startswith("KEYCODE_") else None)

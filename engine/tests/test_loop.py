@@ -311,12 +311,36 @@ steps:
         return reply({"type": "none"}, verify=[v("logged in", False, reason="saw hunter2xyz on screen")])
 
     res, drv, ai, ev = make_run(y, script)
-    assert drv.acts[0]["text"] == "hunter2xyz"
+    assert drv.acts[0]["text"] == "hunter2xyz" and drv.acts[0]["secret"] is True  # Android types it, not pastes
     assert all("hunter2xyz" not in m for m in ai.msgs)
     assert "(pw)" in ai.msgs[0]
     import json
     blob = json.dumps(ev, ensure_ascii=False)
     assert "hunter2xyz" not in blob and "****" in blob
+
+
+def test_only_input_holding_a_secret_is_marked_for_the_driver(make_run, monkeypatch):
+    monkeypatch.setenv("T_PW", "hunter2xyz")
+    y = """
+name: t
+app: "http://x"
+variables:
+  user: taro
+  pw: {env: T_PW, secret: true}
+steps:
+  - id: A
+    actions:
+      - do: "type (user) and (pw)"
+      - then: "logged in"
+"""
+
+    def script(msg, n):
+        if n <= 2:
+            return reply({"type": "input", "x": 1, "y": 1, "text": ["taro", "x(pw)"][n - 1]}, done=n == 2)
+        return reply({"type": "none"}, verify=[v("logged in")])
+
+    res, drv, ai, ev = make_run(y, script)
+    assert [(a["text"], a.get("secret")) for a in drv.acts] == [("taro", None), ("xhunter2xyz", True)]
 
 
 def test_launch_without_instruction_and_noop_are_warned(make_run):

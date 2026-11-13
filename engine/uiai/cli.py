@@ -54,6 +54,7 @@ class Job:
     platform: str
     out: Path
     model: str
+    sides: tuple[str, ...] = ()   # other platforms its sections switch to with `on`
 
 
 class Device:
@@ -114,7 +115,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     from .drivers import DriverError, make_driver
     from .loop import STATUS_LABEL, ScenarioRunner
     from .notify import Webhook
-    from .platform import PlatformError, probe, resolve, target
+    from .platform import LABEL, PlatformError, probe, resolve, target
     from .report import write_scenario, write_summary
     from .scenario import ScenarioError, discover, load, resolve_variables
 
@@ -203,7 +204,7 @@ def cmd_run(a: argparse.Namespace) -> int:
         if available is None:
             available = probe(a.serial, a.udid)
         try:
-            platforms = resolve(sc.app, a.platform, available)
+            platforms = resolve(sc.run_app, a.platform, available, [s.on for s in sc.sections])
         except PlatformError as e:
             skipped.append((sc.name, str(e)))
             events.emit("error", scenario=sc.name, file=str(f), reason=str(e))
@@ -216,10 +217,17 @@ def cmd_run(a: argparse.Namespace) -> int:
             while out.exists():
                 out, n = run_dir / _slug(f"{f.stem}-{p}-{n}"), n + 1
             out.mkdir(parents=True)
-            jobs.append(Job(len(jobs), f, sc, values, p, out, a.model or sc.config.model or DEFAULT_MODEL))
+            jobs.append(Job(len(jobs), f, sc, values, p, out, a.model or sc.config.model or DEFAULT_MODEL,
+                            tuple(sorted(sc.on_platforms - {p}))))
 
-    # 2. Run them: in order (default) or, with --parallel, on every device at once.
-    devices = _devices(a, {p: sum(1 for j in jobs if j.platform == p) for p in {j.platform for j in jobs}})
+    # 2. Run them: in order (default) or, with --parallel, on every device at once. A scenario that switches
+    # devices (`on`) needs several at once: with --parallel those run in order after the others.
+    in_parallel = [j for j in jobs if not j.sides] if a.parallel else []
+    in_order = [j for j in jobs if j.sides] if a.parallel else jobs
+    counts = {p: 0 for j in jobs for p in (j.platform, *j.sides)}  # every platform used gets a device
+    for j in (in_parallel if a.parallel else jobs):
+        counts[j.platform] += 1
+    devices = _devices(a, counts)
     results: list[tuple[int, Any, Path]] = []
     # (scenario, reason, output folder) for each report not written; the run then is not complete
     report_errors: list[tuple[str, str, Path]] = []
@@ -232,7 +240,7 @@ def cmd_run(a: argparse.Namespace) -> int:
             return ApiSession(model, system)
         return ClaudeCodeSession(model, system)
 
-    def run_job(job: Job, dev: Device) -> None:
+    def run_job(job: Job, dev: Device, sides: dict[str, Device] | None = None) -> None:
         rj = a.rejudge_model
         rejudge = None if rj in ("", "none") or _same_model(rj, job.model, backend) else (
             lambda system, m=rj: session(m, system))
@@ -242,10 +250,11 @@ def cmd_run(a: argparse.Namespace) -> int:
                 print(f"[{dev.label}] {s}" if a.parallel else s, flush=True)
 
         try:
+            others = {p: (d.driver, target(job.sc.app, p, job.file.parent)) for p, d in (sides or {}).items()}
             runner = ScenarioRunner(job.sc, job.platform, target(job.sc.app, job.platform, job.file.parent),
                                     dev.driver, lambda system, m=job.model: session(m, system), job.values, job.out,
                                     events, redactor, job.model, printer, rejudge_factory=rejudge, rejudge_model=rj,
-                                    backend=backend, type_delay=a.type_delay)
+                                    backend=backend, type_delay=a.type_delay, others=others)
             res = runner.run()
         except Exception as e:  # noqa: BLE001 — never lose a scenario: it must count in the exit code
             traceback_to_stderr(redactor)
@@ -288,23 +297,34 @@ def cmd_run(a: argparse.Namespace) -> int:
         events.emit("error", scenario=job.sc.name, platform=job.platform, file=str(job.file), reason=reason)
         say(f"✗ {job.sc.name} @ {job.platform}: {reason}")
 
+    def pick(p: str) -> Device | None:
+        """The device of the platform for a job run in order: with --parallel, one that has not failed."""
+        return next((d for d in devices[p] if not d.error), devices[p][0] if devices[p] else None)
+
+    def run_in_order(job: Job) -> None:
+        nonlocal errored
+        dev, sides = pick(job.platform), {p: pick(p) for p in job.sides}
+        started.add(job.no)
+        if dev is None or None in sides.values():
+            skip(job, "実行できる端末がない（端末なし）")
+            errored = True
+            return
+        for d in (dev, *sides.values()):
+            in_order_devices.add(d)
+            if not open_driver(d):
+                what = "" if d is dev else f"`on: {d.platform}` の {LABEL[d.platform]}: "
+                skip(job, what + d.error)
+                errored = True
+                return
+        run_job(job, dev, sides)
+
     interrupted = False
     started: set[int] = set()
+    in_order_devices: set[Device] = set()  # opened in this thread: closed here at the end
     try:
-        if not a.parallel:
-            for job in jobs:
-                if stop_all.is_set():
-                    break
-                dev = devices[job.platform][0]
-                started.add(job.no)
-                if not open_driver(dev):
-                    skip(job, dev.error)
-                    errored = True
-                    continue
-                run_job(job, dev)
-        else:
+        if a.parallel:
             queues = {p: queue.Queue() for p in devices}
-            for job in jobs:
+            for job in in_parallel:
                 queues[job.platform].put(job)
 
             def work(dev: Device) -> None:
@@ -326,30 +346,35 @@ def cmd_run(a: argparse.Namespace) -> int:
                 finally:
                     close_driver(dev)  # Playwright objects must be closed in the thread that made them
 
+            workers = {p: ds[:counts[p]] for p, ds in devices.items() if counts[p]}
             threads = [threading.Thread(target=work, args=(d,), daemon=True, name=d.label)
-                       for ds in devices.values() for d in ds]
+                       for ds in workers.values() for d in ds]
             if threads:
                 _out("並列実行: " + "、".join(f"{p} {len(ds)} 台（{', '.join(d.label for d in ds)}）"
-                                           for p, ds in devices.items()))
+                                           for p, ds in workers.items()))
             for th in threads:
                 th.start()
             while any(th.is_alive() for th in threads):
                 for th in threads:
                     th.join(timeout=0.5)
-            for job in jobs:
+            for job in in_parallel:
                 if job.no not in started and not stop_all.is_set():
                     errs = "; ".join(f"{d.label}: {d.error}" for d in devices[job.platform] if d.error)
                     skip(job, f"実行できる端末がない（{errs or '端末なし'}）")
                     errored = True
+            if in_order and not stop_all.is_set():
+                _out(f"端末を切り替えるシナリオ（on）{len(in_order)} 件は、ここから順番に実行する")
+        for job in in_order:
+            if stop_all.is_set():
+                break
+            run_in_order(job)
     except KeyboardInterrupt:
         interrupted = True
         stop_all.set()
         _out("中断した")
     finally:
-        if not a.parallel:
-            for ds in devices.values():
-                for d in ds:
-                    close_driver(d)
+        for d in in_order_devices:
+            close_driver(d)
     for job in jobs:
         if job.no not in started and stop_all.is_set() and not interrupted:
             skipped.append((f"{job.sc.name} @ {job.platform}", "on_failure: stop_all により未実行"))
@@ -411,7 +436,7 @@ def _dry_run(files: list[Path], overrides: dict[str, str], a: argparse.Namespace
         if available is None:
             available = probe(a.serial, a.udid)
         try:
-            platforms = resolve(sc.app, a.platform, available)
+            platforms = resolve(sc.run_app, a.platform, available, [s.on for s in sc.sections])
         except PlatformError as e:
             _out(f"✗ {f}（{sc.name}）: {e}")
             ok = False
@@ -425,7 +450,9 @@ def _dry_run(files: list[Path], overrides: dict[str, str], a: argparse.Namespace
             _out(f"✗ {f}（{sc.name}）: 値のない変数: {', '.join(parts)}")
             ok = False
             continue
-        _out(f"OK {f}（{sc.name}）: {', '.join(platforms)} で実行できる")
+        sides = sorted(sc.on_platforms - set(platforms))
+        on = f"（`on` で {', '.join(sides)} にも切り替える）" if sides else ""
+        _out(f"OK {f}（{sc.name}）: {', '.join(platforms)} で実行できる{on}")
     return 0 if ok else 2
 
 

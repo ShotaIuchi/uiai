@@ -81,7 +81,13 @@ def probe(serial: str | list[str] | None = None, udid: str | list[str] | None = 
             "web": True}
 
 
-def resolve(app: Any, requested: str | None, available: dict[str, bool]) -> list[str]:
+def resolve(app: Any, requested: str | None, available: dict[str, bool], ons: Any = ()) -> list[str]:
+    """The platform(s) the run is for. `ons`: each section's `on` (None: the run's platform). The platforms
+    named there have to be available too, and when choosing automatically they are not candidates for the
+    run itself (an Android test with a Web section runs on Android). If every section names one, the run is
+    for the first section's."""
+    ons = list(ons)
+    side = {o for o in ons if o}
     cands = candidates(app)
     names = "・".join(LABEL[p] for p in cands)
     if requested and requested != "all":
@@ -89,14 +95,28 @@ def resolve(app: Any, requested: str | None, available: dict[str, bool]) -> list
             raise PlatformError(f"シナリオの `app` は {names} 向けで、{LABEL.get(requested, requested)} では実行できない")
         if not available.get(requested):
             raise PlatformError(f"{LABEL[requested]} の実行対象が見つからない（{_hint(requested)}）")
+        _check_side(requested, side, available)
         return [requested]
-    usable = [p for p in cands if available.get(p)]
+    if ons and all(ons):
+        main = [ons[0]]
+    else:
+        main = [p for p in cands if p not in side] or cands
+    usable = [p for p in main if available.get(p)]
     if not usable:
-        raise PlatformError(f"実行できる対象がない（候補: {names}。" + "、".join(_hint(p) for p in cands) + "）")
+        raise PlatformError(f"実行できる対象がない（候補: {'・'.join(LABEL[p] for p in main)}。"
+                            + "、".join(_hint(p) for p in main) + "）")
     if requested == "all" or len(usable) == 1:
+        for p in usable:
+            _check_side(p, side, available)
         return usable
     raise PlatformError(f"複数のプラットフォームで実行できる（{'・'.join(LABEL[p] for p in usable)}）。"
                         "--platform で 1 つ選ぶか、all を指定する")
+
+
+def _check_side(main: str, side: Any, available: dict[str, bool]) -> None:
+    for p in sorted(set(side) - {main}):
+        if not available.get(p):
+            raise PlatformError(f"`on: {p}` のセクションがあるが、{LABEL[p]} の実行対象が見つからない（{_hint(p)}）")
 
 
 def _hint(p: str) -> str:

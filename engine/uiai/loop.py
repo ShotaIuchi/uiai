@@ -66,6 +66,7 @@ class StepResult:
     origin: str
     text: str
     strict: bool = False
+    platform: str = ""          # the device it runs on (a section's `on`, else the scenario's)
     status: str = "not_run"     # pass | fail | not_run | skip (an optional `do` that failed)
     reason: str = ""
     read: str | None = None
@@ -91,6 +92,7 @@ class ScenarioResult:
     platform: str
     target: str
     model: str
+    others: dict[str, str] = field(default_factory=dict)  # platform -> target of the sections with `on`
     backend: str = ""  # claude-code | api: the one asked for, then the one each opened session reports
     model_id: str = ""  # the model ID sent, when the backend knows it (api); claude-code resolves it itself
     status: str = "pass"   # pass | pass_warn | fail | error | skipped
@@ -116,8 +118,16 @@ class ScenarioRunner:
                  events: EventLog, redactor: Redactor, model: str,
                  printer: Callable[[str], None] = lambda s: print(s, flush=True), *,
                  rejudge_factory: Callable[[str], object] | None = None, rejudge_model: str = "",
-                 backend: str = "", type_delay: float | None = None):
+                 backend: str = "", type_delay: float | None = None,
+                 others: dict[str, tuple[Driver, str]] | None = None):
+        """others: (driver, target) for each other platform that sections switch to with `on`."""
         self.sc, self.platform, self.app, self.drv = sc, platform, target, driver
+        # every device of the scenario; the one in use is self.cur (self.drv, self.app)
+        self.targets = {platform: (driver, target), **{p: o for p, o in (others or {}).items() if p != platform}}
+        self.multi = len(self.targets) > 1
+        self.cur: str | None = None
+        self.parked: dict[str, tuple] = {}  # the conversations of the devices not in use
+        self.fresh = False  # just switched to a device not used yet: tell the AI its app is not open
         self.ai_factory, self.values, self.out = ai_factory, values, out_dir
         self.rejudge_factory, self.rejudge_model = rejudge_factory, rejudge_model
         self.events, self.redact, self.print = events, redactor, printer
@@ -127,15 +137,18 @@ class ScenarioRunner:
         self.secrets = sc.secret_names
         self.ai = None
         self.res = ScenarioResult(sc.name, str(sc.path), platform, target, model, backend=backend,
+                                  others={p: t for p, (_, t) in self.targets.items() if p != platform},
                                   check_warnings=[str(w) for w in sc.warnings])
-        self.steps = {it.index: StepResult(it.index, it.kind, it.section, it.origin, self.text(it), it.strict)
-                      for it in sc.items}
+        on = {s.id: s.on or platform for s in sc.sections}
+        self.steps = {it.index: StepResult(it.index, it.kind, it.section, it.origin, self.text(it), it.strict,
+                                           on[it.section]) for it in sc.items}
         self.res.steps = list(self.steps.values())
         self.items = sc.items
         self.t0 = 0.0
         self.section_first_do = True
         self.system = ""
         self.session_no = 0          # conversations started so far
+        self.session_id = 0          # the number of the one in use (with `on`, an earlier one may be taken up again)
         self.session_calls = 0       # calls in the current conversation
         self.session_tokens = 0      # input tokens of its last call
         self.session_section = -1    # section of the last `do` run in it
@@ -147,6 +160,8 @@ class ScenarioRunner:
         return render(it.raw, self.values, self.secrets)
 
     def ev(self, type_: str, **kw) -> None:
+        if self.multi and self.cur and self.cur != self.platform:
+            kw.setdefault("device", self.cur)  # a section with `on`: where it happened
         self.events.emit(type_, scenario=self.sc.name, platform=self.platform, file=str(self.sc.path), **kw)
 
     def elapsed(self) -> float:
@@ -170,6 +185,7 @@ class ScenarioRunner:
         self.res.backend = getattr(self.ai, "backend", self.res.backend)  # what actually runs wins
         self.res.model_id = getattr(self.ai, "model_id", self.res.model_id)
         self.session_no += 1
+        self.session_id = self.session_no
         self.session_calls = self.session_tokens = 0
         self.carry_history = self.session_no > 1
         if old is not None:
@@ -194,10 +210,55 @@ class ScenarioRunner:
         if not done:
             return ""
         label = {"pass": "done", "fail": "FAILED", "skip": "FAILED (optional: skipped, the scenario went on)"}
-        lines = [f"- [{s.section}] {s.kind}: {s.text} -> {label[s.status] if s.kind == 'do' else s.status}"
-                 for s in done]
-        return ("Earlier steps of this scenario (from a previous conversation; their screenshots are not "
-                "repeated):\n" + "\n".join(lines) + "\n\n")
+        lines = [f"- [{s.section}{f' @ {s.platform}' if self.multi else ''}] {s.kind}: {s.text} -> "
+                 f"{label[s.status] if s.kind == 'do' else s.status}" for s in done]
+        head = ("Earlier steps of this scenario (on this or another device, each device in its own conversation; "
+                f"you are now on {self.cur}; screenshots of other conversations are not repeated)" if self.multi else
+                "Earlier steps of this scenario (from a previous conversation; their screenshots are not repeated)")
+        return head + ":\n" + "\n".join(lines) + "\n\n"
+
+    def apps(self) -> list[tuple[Driver, str]]:
+        """(driver, app) of every app the scenario uses: the scenario's on each device, and those of the
+        included sections that differ."""
+        out = list(self.targets.values())
+        for sec in self.sc.sections:
+            plat = sec.on or self.platform
+            pair = (self.targets[plat][0], sec.targets.get(plat) or self.targets[plat][1])
+            if pair not in out:
+                out.append(pair)
+        return out
+
+    def use(self, platform: str, app: str | None = None) -> None:
+        """Switch to the device of `platform` and its app `app` (default: the scenario's; an included section
+        has its own). Each device has its own conversation, since the system prompt describes its screen; the
+        one left is parked for when the scenario comes back to that device."""
+        app = app or self.targets[platform][1]
+        if platform == self.cur:
+            if app != self.app:
+                self.print(f"  → {app}")
+            self.app = app
+            return
+        if self.cur is not None:
+            self.drv.wait_out()  # a `wait` of the last `do` there is over before going on elsewhere
+            self.parked[self.cur] = (self.ai, self.system, self.session_id, self.session_calls,
+                                     self.session_tokens, self.session_section)
+            self.print(f"  ⇄ {platform} に切り替え（{app}）")
+        self.cur = platform
+        self.drv, self.app = self.targets[platform][0], app
+        if platform in self.parked:
+            self.ai, self.system, self.session_id, self.session_calls, self.session_tokens, \
+                self.session_section = self.parked.pop(platform)
+            self.carry_history = True  # what was done on the other device meanwhile
+            return
+        # A blank page did not tell the AI that the admin page of "open the admin page and ..." was not open yet:
+        # it waited and failed (real run, Web after Android).
+        self.fresh = self.ai is not None
+        self.ai = None  # the conversation of the device left is parked, not closed
+        self.system = system_prompt(self.drv.description, self.drv.iw, self.drv.ih,
+                                    self.cfg.interrupts.allow, sorted(self.secrets),
+                                    optional=any(it.optional for it in self.items))
+        self.open_session()
+        self.section_first_do = True
 
     # ------------------------------------------------------------------ AI call
     def observe(self):
@@ -217,6 +278,11 @@ class ScenarioRunner:
     def ask(self, a: Ask, obs, kind: str, step_index: int | None) -> tuple[dict, dict]:
         self.check_time()
         msg = build_message(a)
+        if self.fresh:
+            msg = (f"You have just switched to {self.drv.description} (`on: {self.cur}`). It was reset before the "
+                   "scenario started and has not been used since: the app under test is not open yet. Use \"launch\" "
+                   "to open it if the step needs it.\n\n" + msg)
+            self.fresh = False
         if self.carry_history:
             msg = self.history_text() + msg
             self.carry_history = False
@@ -243,8 +309,8 @@ class ScenarioRunner:
             "error_shown": res["error_shown"], "done": res["done"], "act_result": "",
             "image": img, "iw": obs.width, "ih": obs.height, "screen_changed": obs.changed,
             "obs_s": obs.seconds, "obs_polls": obs.polls, "llm_s": meta["wall_s"], "api_s": meta["api_s"],
-            "in_tokens": meta["in_tokens"], "out_tokens": meta["out_tokens"], "session": self.session_no,
-            "note": "",
+            "in_tokens": meta["in_tokens"], "out_tokens": meta["out_tokens"], "session": self.session_id,
+            "platform": self.cur, "note": "",
         }
         self.res.calls.append(rec)
         if step_index is not None:
@@ -259,8 +325,9 @@ class ScenarioRunner:
         tag = {"interrupt": " [割り込み]", "verify": " [判定のため]"}.get(rec["purpose"], "")
         what = "判定のみ" if rec["do"] is None else f"「{rec['do']}」"
         res = "" if rec["act_result"] in ("", "ok") else f" -> {rec['act_result']}"
+        where = rec["section"] + (f" @ {rec['platform']}" if self.multi else "")
         self.print(self.redact.text(
-            f"  #{rec['n']:02d} [{rec['section']}] {what} {rec['kind']}: {t}{tgt}{tag}{res}"
+            f"  #{rec['n']:02d} [{where}] {what} {rec['kind']}: {t}{tgt}{tag}{res}"
             f" | 撮影 {rec['obs_s']}s AI {rec['llm_s']}s" + (f" | {rec['note']}" if rec["note"] else "")))
 
     # ------------------------------------------------------------------ then judging
@@ -549,30 +616,35 @@ class ScenarioRunner:
     def run(self) -> ScenarioResult:
         self.t0 = time.time()
         self.res.started_at = time.strftime("%Y-%m-%d %H:%M:%S")
-        self.ev("scenario_start", target=self.app)
-        self.print(f"▶ {self.sc.name} @ {self.platform}（{self.app}）")
+        self.ev("scenario_start", target=self.app, **({"others": self.res.others} if self.multi else {}))
+        self.print(f"▶ {self.sc.name} @ {self.platform}（{self.app}）"
+                   + "".join(f" + {p}（{t}）" for p, t in self.res.others.items()))
         pending: list[ThenState] = []
         try:
-            self.drv.type_delay = self.type_delay / 1000  # the device may run several scenarios: set it each time
-            self.drv.reset(self.app, self.cfg)
-            self.system = system_prompt(self.drv.description, self.drv.iw, self.drv.ih,
-                                        self.cfg.interrupts.allow, sorted(self.secrets),
-                                        optional=any(it.optional for it in self.items))
-            self.open_session()
+            for drv, app in self.apps():  # every device (and app of an included scenario) starts reset
+                drv.type_delay = self.type_delay / 1000  # a device may run several scenarios: set it each time
+                drv.reset(app, self.cfg)
             sections = self.sc.sections
             stop = False
             for si, sec in enumerate(sections):
                 if stop:
                     break
-                if si > 0 and self.cfg.on_failure == "next_section":
-                    if pending:
-                        try:
-                            self.judge_only(pending)
-                        except StopScenario as e:  # the scenario's time ran out: the rest is not run
-                            self.fail_pending(pending, str(e), not_run=sum(len(x.items) for x in sections[si:]))
-                            pending = []
-                            break
+                plat = sec.on or self.platform
+                reset = si > 0 and self.cfg.on_failure == "next_section"
+                if pending and (reset or plat != self.cur):
+                    # the `then`s left are judged where their `do`s ran, before going on (elsewhere)
+                    try:
+                        self.judge_only(pending)
+                    except StopScenario as e:  # the scenario's time ran out: the rest is not run
+                        self.fail_pending(pending, str(e), not_run=sum(len(x.items) for x in sections[si:]))
                         pending = []
+                        break
+                    pending = []
+                    if self.res.stop_all:
+                        self.print("  ■ on_failure: stop_all — 以降は実行しない")
+                        break
+                self.use(plat, sec.targets.get(plat))
+                if reset:
                     self.drv.wait_out()  # a `wait` of the last `do` is over before the reset
                     self.drv.reset(self.app, self.cfg)
                     self.section_first_do = True
@@ -619,7 +691,8 @@ class ScenarioRunner:
                     self.fail_pending(pending, str(e))
             self.drv.wait_out()  # a `wait` of the last `do` (nothing judged after it) is still waited for
             if self.cfg.stop_app_after:
-                self.drv.stop_app(self.app)
+                for drv, app in self.apps():
+                    drv.stop_app(app)
         except Exception as e:  # noqa: BLE001 — an unexpected failure still ends as a recorded error
             if isinstance(e, (AIError, DriverError)):
                 msg = str(e)
@@ -630,11 +703,12 @@ class ScenarioRunner:
             self.ev("error", reason=self.res.error)
             self.print(f"  ✗ 実行エラー: {self.res.error}")
         finally:
-            if self.ai is not None:
-                try:
-                    self.ai.close()
-                except Exception:  # noqa: BLE001 — the scenario is over; its result must not be lost to this
-                    traceback_to_stderr(self.redact)
+            for ai in [self.ai, *(p[0] for p in self.parked.values())]:
+                if ai is not None:
+                    try:
+                        ai.close()
+                    except Exception:  # noqa: BLE001 — the scenario is over; its result must not be lost to this
+                        traceback_to_stderr(self.redact)
             for th in self.closing:
                 th.join(timeout=15)
             self.res.seconds = round(self.elapsed(), 1)

@@ -133,8 +133,10 @@ def clock(monkeypatch):
 
 @pytest.fixture
 def make_run(tmp_path, clock):
-    def _make(yaml_text: str, script, driver=None, values=None, fresh_ai=False, rejudge=None, factory=None):
-        """fresh_ai: each conversation gets its own FakeAI (returned as a list); `script(msg, n)` then
+    def _make(yaml_text: str, script, driver=None, values=None, fresh_ai=False, rejudge=None, factory=None,
+              platform="web", others=None):
+        """others: {platform: (driver, target)} for sections with `on`.
+        fresh_ai: each conversation gets its own FakeAI (returned as a list); `script(msg, n)` then
         sees n counted per conversation. Otherwise one FakeAI serves every conversation.
         rejudge: `rejudge(msg)` -> reply (dict, str, or an exception to raise) of the re-judge model; the
         FakeAIs it answered through are in `runner.rejudges`.
@@ -171,9 +173,9 @@ def make_run(tmp_path, clock):
                 return r
             rejudges.append(FakeAI(answer))
             return rejudges[-1]
-        runner = ScenarioRunner(sc, "web", "http://x", drv, factory, vals, out, ev, red, "haiku",
+        runner = ScenarioRunner(sc, platform, "http://x", drv, factory, vals, out, ev, red, "haiku",
                                 printer=lambda s: None, rejudge_factory=rejudge_factory if rejudge else None,
-                                rejudge_model="sonnet")
+                                rejudge_model="sonnet", others=others)
         runner.rejudges = rejudges
         res = runner.run()
         ev.close()

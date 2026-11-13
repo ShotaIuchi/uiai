@@ -59,7 +59,8 @@ class EventLog:
 
 def describe(ev: dict) -> str:
     """One human-readable line for a notification."""
-    where = f"{ev.get('scenario', '')}" + (f" @ {ev['platform']}" if ev.get("platform") else "")
+    where = f"{ev.get('scenario', '')}" + (f" @ {ev['platform']}" if ev.get("platform") else "") + \
+        (f"（on: {ev['device']}）" if ev.get("device") else "")
     if ev["type"] == "error":
         return f"[uiai] 実行エラー: {where}: {ev.get('reason', '')}"
     if ev["type"] == "fail":

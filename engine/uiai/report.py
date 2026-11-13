@@ -42,11 +42,16 @@ def _meta_lines(res: ScenarioResult) -> list[str]:
         f"- ステップ: 合格 {c['pass']}・不合格 {c['fail']}・未実行 {c['not_run']}"
         + (f"・スキップ（optional） {c['skip']}" if c["skip"] else "") + f"・警告 {c['warnings']}",
         f"- シナリオ: `{res.file}`",
-        f"- 対象: {res.platform}（{res.target}）",
+        f"- 対象: {res.platform}（{res.target}）" + "".join(f"、`on: {p}` は {p}（{t}）" for p, t in res.others.items()),
         f"- モデル: {res.model}{_backend_note(res)}"
         f"・AI 呼び出し {len(res.calls)} 回（会話 {sessions} 本）・1 回の入力は最大 {tokens} トークン",
         f"- 開始: {res.started_at}・所要 {res.seconds} 秒",
     ]
+
+
+def _on(res: ScenarioResult, platform: str | None) -> str:
+    """The device of a step or call, when it is not the scenario's (a section with `on`)."""
+    return f" @ {platform}" if platform and platform != res.platform else ""
 
 
 def _report_md(res: ScenarioResult) -> str:
@@ -55,7 +60,7 @@ def _report_md(res: ScenarioResult) -> str:
     for s in res.steps:
         why = s.reason + (f"（読み取り: {s.read}）" if s.read else "")
         extra = "; ".join([f"⚠️ {w}" for w in s.warnings] + s.notes)
-        sec = s.section + (f"（replay: {s.origin}）" if s.origin != s.section else "")
+        sec = s.section + (f"（replay: {s.origin}）" if s.origin != s.section else "") + _on(res, s.platform)
         lines.append(f"| {s.index + 1} | {_md(sec)} | {s.kind}{' [strict]' if s.strict else ''} | {_md(s.text)} "
                      f"| {ICON[s.status]} {STATUS_LABEL[s.status]} | {_md(why)} | {_md(extra)} |")
     if res.check_warnings:
@@ -97,7 +102,7 @@ def _report_html(res: ScenarioResult) -> str:
         why = e(s.reason) + (f"<br><span class=small>読み取り: <code>{e(s.read)}</code></span>" if s.read else "")
         extra = "<br>".join([f"<span class=warn>⚠️ {e(w)}</span>" for w in s.warnings] + [e(n) for n in s.notes])
         calls = " ".join(f'<a href="#c{n}">#{n}</a>' for n in s.calls)
-        rows.append(f"<tr><td>{s.index + 1}</td><td>{e(s.section)}</td><td>{s.kind}{' [strict]' if s.strict else ''}</td>"
+        rows.append(f"<tr><td>{s.index + 1}</td><td>{e(s.section + _on(res, s.platform))}</td><td>{s.kind}{' [strict]' if s.strict else ''}</td>"
                     f"<td>{e(s.text)}</td><td class={cls}>{ICON[s.status]} {STATUS_LABEL[s.status]}</td>"
                     f"<td>{why}</td><td>{extra}</td><td>{calls}</td></tr>")
     cards = []
@@ -124,7 +129,7 @@ def _report_html(res: ScenarioResult) -> str:
             (f" <code>{e(str(a.get('key', '')))}</code>" if a.get("type") == "key" else "")
         tag = {"interrupt": " [割り込み]", "verify": " [判定のため]"}.get(c["purpose"], "")
         cards.append(
-            f'<div class=call id="c{c["n"]}"><div class=small>#{c["n"]} · {c["t"]}s · {e(c["section"])} · {c["kind"]}</div>'
+            f'<div class=call id="c{c["n"]}"><div class=small>#{c["n"]} · {c["t"]}s · {e(c["section"] + _on(res, c.get("platform")))} · {c["kind"]}</div>'
             f'<div><b>{e(c["do"]) if c["do"] else "（判定のみ）"}</b></div>'
             f'<a class=shot href="{c["image"]}">{mark}<img src="{c["image"]}" alt="call {c["n"]}"></a>'
             f'<div>{op}{tag}' + (f' → {e(c["act_result"])}' if c["act_result"] not in ("", "ok") else "") + "</div>"

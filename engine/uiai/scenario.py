@@ -24,6 +24,7 @@ CONFIG_KEYS = {
     "timeout", "clear_data_before", "stop_app_after", "strict", "verify",
     "then_timeout", "max_actions", "interrupts", "on_failure", "reset", "model", "type_delay",
 }
+INCLUDE_KEYS = {"include", "id", "on"}
 DEFAULT_TIMEOUT = 600.0
 DEFAULT_THEN_TIMEOUT = 5.0
 DEFAULT_OBSERVE = 2.0
@@ -110,6 +111,9 @@ class Item:
 class Section:
     id: str
     items: list[Item]
+    on: str | None = None   # the platform it runs on; None: the one chosen for the run
+    # included sections: {platform: target} of the scenario they come from (it wins over `Scenario.app`)
+    targets: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -121,6 +125,13 @@ class Scenario:
     variables: dict[str, Variable]
     sections: list[Section]
     warnings: list[Issue] = field(default_factory=list)
+    # the `app` of the file itself: what the run's platform is chosen from (`app` also has the platforms that
+    # included scenarios add, for their sections)
+    own_app: Any = None
+
+    @property
+    def run_app(self) -> Any:
+        return self.app if self.own_app is None else self.own_app
 
     @property
     def items(self) -> list[Item]:
@@ -129,6 +140,11 @@ class Scenario:
     @property
     def secret_names(self) -> set[str]:
         return {n for n, v in self.variables.items() if v.secret}
+
+    @property
+    def on_platforms(self) -> set[str]:
+        """Platforms named by sections' `on`."""
+        return {s.on for s in self.sections if s.on}
 
 
 # --------------------------------------------------------------------------- #
@@ -143,6 +159,11 @@ class _Loader(yaml.SafeLoader):
 def _construct_mapping(loader: _Loader, node: yaml.MappingNode, deep: bool = False) -> dict:
     seen: set = set()
     for key_node, _ in node.value:
+        # YAML 1.1 reads a plain `on` as true: as a key it is the section's `on` (values are left alone)
+        if isinstance(key_node, yaml.ScalarNode) and key_node.tag == "tag:yaml.org,2002:bool" \
+                and key_node.style is None and key_node.value in ("on", "On", "ON"):
+            key_node.tag = "tag:yaml.org,2002:str"
+            key_node.value = "on"
         key = loader.construct_object(key_node, deep=deep)
         if key in seen:
             loader.duplicates.append((key, key_node.start_mark.line + 1))
@@ -151,6 +172,101 @@ def _construct_mapping(loader: _Loader, node: yaml.MappingNode, deep: bool = Fal
 
 
 _Loader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_mapping)
+
+
+def _read_scenario(path: Path) -> tuple[Any, list[tuple[Any, int]], list["Issue"]]:
+    """The scenario with its `include`s expanded (recursively), its duplicate keys, and the include problems."""
+    data, dups = _read_yaml(path)
+    issues: list[Issue] = []
+    return _flatten(data, path.resolve(), (path.resolve(),), issues), dups, issues
+
+
+def _flatten(data: Any, path: Path, stack: tuple[Path, ...], issues: list["Issue"]) -> Any:
+    """Replace each `include` entry of `steps` with the sections of that scenario: ids prefixed with the entry's
+    `id` (else the scenario's name) and `/`, the entry's `on` given to those without one, and the scenario's
+    targets kept on them. Its variables and platforms are added where this scenario has none; its config is not
+    used. An included scenario must be valid on its own."""
+    if not isinstance(data, dict) or not isinstance(data.get("steps"), list) or not any(
+            isinstance(s, dict) and "include" in s for s in data["steps"]):
+        return data
+    from .platform import candidates, target
+
+    def err(code: str, msg: str, where: str) -> None:
+        issues.append(Issue(code, "error", msg, where))
+
+    data = dict(data)
+    app = data.get("app")
+    merged_app = None if not isinstance(app, (str, dict)) or not app else (
+        dict(app) if isinstance(app, dict) else {p: app for p in candidates(app)})
+    variables = data.get("variables") or {}
+    variables = dict(variables) if isinstance(variables, dict) else None
+    steps: list = []
+    for i, sec in enumerate(data["steps"]):
+        if not (isinstance(sec, dict) and "include" in sec):
+            steps.append(sec)
+            continue
+        inc = sec["include"]
+        where = f"steps[{i}]（include: {inc}）"
+        extra = sorted(str(k) for k in sec if k not in INCLUDE_KEYS)
+        if extra:
+            err("E043", f"`include` のセクションには `id`・`on` しか書けない（{', '.join(extra)}）", where)
+            continue
+        if not isinstance(inc, str) or not inc.strip():
+            err("E040", "`include` はシナリオファイルのパス（このファイルからの相対パス）", where)
+            continue
+        if "on" in sec and sec["on"] not in PLATFORMS:
+            err("E017", f"`on` は {'/'.join(PLATFORMS)} のいずれか", where)
+            continue
+        sub_path = (path.parent / inc).resolve()
+        if sub_path in stack:
+            err("E041", "`include` が循環している（" + " → ".join(p.name for p in (*stack, sub_path)) + "）", where)
+            continue
+        try:
+            sub, sub_dups = _read_yaml(sub_path)
+        except yaml.YAMLError as e:
+            err("E040", f"`include` 先の YAML の構文エラー: {e}", where)
+            continue
+        except OSError as e:
+            err("E040", f"`include` 先を読み込めない: {e}", where)
+            continue
+        sub_issues: list[Issue] = []
+        sub = _flatten(sub, sub_path, (*stack, sub_path), sub_issues)
+        bad = [x for x in sub_issues + check_data(sub, sub_dups) if x.level == "error"]
+        if bad:
+            err("E042", "`include` 先のシナリオにエラーがある: " + "; ".join(
+                f"{x.code} {x.message}" + (f"（{x.where}）" if x.where else "") for x in bad), where)
+            continue
+        prefix = str(sec.get("id") or sub["name"])
+        sub_targets = {p: target(sub["app"], p, sub_path.parent) for p in candidates(sub["app"])}
+        if merged_app is not None:
+            for p, t in sub_targets.items():
+                merged_app.setdefault(p, t)
+        if variables is not None:
+            for n, spec in (sub.get("variables") or {}).items():
+                if n not in variables:
+                    variables[n] = spec
+                elif parse_variable(n, spec).secret and not parse_variable(n, variables[n]).secret:
+                    variables[n] = _as_secret(variables[n])  # secret if either side says so
+        for s in sub["steps"]:
+            s = dict(s, id=f"{prefix}/{s['id']}", _targets={**sub_targets, **s.get("_targets", {})})
+            if isinstance(s.get("replay"), dict):
+                r = s["replay"]
+                s["replay"] = dict(r, **{k: f"{prefix}/{r[k]}" for k in ("from", "to")})
+            if "on" not in s and "on" in sec:
+                s["on"] = sec["on"]
+            steps.append(s)
+    data["steps"] = steps
+    if merged_app is not None:
+        data["_own_app"], data["app"] = data.get("_own_app", app), merged_app
+    if variables is not None:
+        data["variables"] = variables
+    return data
+
+
+def _as_secret(spec: Any) -> Any:
+    if isinstance(spec, dict):
+        return dict(spec, secret=True)
+    return {"secret": True} if spec is None else {"value": spec, "secret": True}
 
 
 def _read_yaml(path: Path) -> tuple[Any, list[tuple[Any, int]]]:
@@ -277,6 +393,11 @@ def check_data(data: Any, duplicates: list[tuple[Any, int]] | None = None) -> li
             ids.append(sid)
         if "actions" not in sec and "replay" not in sec:
             err("E006", "`actions` がない", where)
+        if "on" in sec:
+            if sec["on"] not in PLATFORMS:
+                err("E017", f"`on` は {'/'.join(PLATFORMS)} のいずれか", where)
+            elif app and not _app_covers(app, sec["on"]):
+                err("E018", f"`on: {sec['on']}` のセクションがあるが、`app` に {sec['on']} の対象がない", where)
 
     used_vars: set[str] = set()
     for i, sec in enumerate(steps):
@@ -295,6 +416,12 @@ def check_data(data: Any, duplicates: list[tuple[Any, int]] | None = None) -> li
                     err("E021", f"`replay.to` 「{t}」が存在しない", where)
                 if f in ids and t in ids and ids.index(f) > ids.index(t):
                     err("E022", f"`replay` の from 「{f}」が to 「{t}」より後にある", where)
+                elif f in ids and t in ids:
+                    ons = {str(s.get("id")): s.get("on") for s in steps if isinstance(s, dict)}
+                    other = [x for x in ids[ids.index(f): ids.index(t) + 1] if ons.get(x) != sec.get("on")]
+                    if other:
+                        warn("W011", f"`replay` の範囲に `on` が違うセクション（{'、'.join(other)}）がある。"
+                             "再実行はこのセクションのデバイスで行う", where)
         actions = sec.get("actions")
         if actions is None:
             continue
@@ -369,6 +496,13 @@ def check_data(data: Any, duplicates: list[tuple[Any, int]] | None = None) -> li
     return issues
 
 
+def _app_covers(app: Any, platform: str) -> bool:
+    """Whether `app` names a target for the platform (as platform.candidates reads it)."""
+    if isinstance(app, dict):
+        return platform in app
+    return platform == "web" if is_web_target(str(app)) else platform in ("android", "ios")
+
+
 def _check_app(app: Any, err) -> None:
     if isinstance(app, str):
         if not (is_web_target(app) or PACKAGE_RE.match(app)):
@@ -418,12 +552,12 @@ def _find_replay_cycle(steps: list) -> list[str] | None:
 
 def check_file(path: Path) -> list[Issue]:
     try:
-        data, dups = _read_yaml(path)
+        data, dups, issues = _read_scenario(path)
     except yaml.YAMLError as e:
         return [Issue("E000", "error", f"YAML の構文エラー: {e}")]
     except OSError as e:
         return [Issue("E000", "error", f"読み込めない: {e}")]
-    return check_data(data, dups)
+    return issues + check_data(data, dups)
 
 
 # --------------------------------------------------------------------------- #
@@ -499,7 +633,8 @@ def _expand(steps: list[dict], cfg: Config) -> list[Section]:
         for it in items:
             it.index = n
             n += 1
-        sections.append(Section(sid, items))
+        sections.append(Section(sid, items, on=sec.get("on") if sec.get("on") in PLATFORMS else None,
+                                targets=dict(sec.get("_targets") or {})))
     return sections
 
 
@@ -508,12 +643,13 @@ def load(path: Path) -> Scenario:
     issues = check_file(path)
     if any(i.level == "error" for i in issues):
         raise ScenarioError(path, issues)
-    data, _ = _read_yaml(path)
+    data, _, _ = _read_scenario(path)
     cfg = _parse_config(data.get("config") or {})
     variables = {n: parse_variable(n, s) for n, s in (data.get("variables") or {}).items()}
     sections = _expand(data["steps"], cfg)
     return Scenario(path=path, name=str(data["name"]), app=data["app"], config=cfg, variables=variables,
-                    sections=sections, warnings=[i for i in issues if i.level == "warning"])
+                    sections=sections, warnings=[i for i in issues if i.level == "warning"],
+                    own_app=data.get("_own_app"))
 
 
 def discover(paths: list[str]) -> list[Path]:

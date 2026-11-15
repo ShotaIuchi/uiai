@@ -42,6 +42,7 @@ uiai run <シナリオかフォルダ>... [--platform android|ios|web|all] [--mo
 - Android 端末が複数つながっていれば `--serial`、iOS の対象（iPhone とシミュレータ）が複数あれば `--udid` で選ぶ
 - iPhone は WebDriverAgent で操作する。iPhone で動いていなければ、`~/Library/Caches/uiai/wda` に版を固定して取得し、Xcode にサインインしたチームで署名してビルドし（`xcodebuild build-for-testing`。初回は数分）、`xcodebuild test-without-building` で起動して、終わったら止める。チームが複数あれば `--ios-team`（または `UIAI_IOS_TEAM`）で選ぶ（有料と無料のチームがあれば有料を使う）。Mac から iPhone のポートへは usbmuxd で直接つなぐ（iproxy・Appium は要らない）
 - 値のない変数は、`--var`、`env:` の環境変数、対話入力の順に解決する。どれもなければ、そのシナリオは実行しない。実行の前に、全シナリオの分をまとめて解決する
+- `then` の `save` で画面から読み取る変数は、実行中に値が決まる（実行前には求めない）。`then` が合格したときに AI が読み取った値を入れ、後のステップの文を、実行する時点の値で置き換える。次のステップがその変数を使うときだけ、保留中の `then` を先に判定する。値が決まらなければ、それを使う `do` は実行せず、`do` の失敗と同じく `on_failure` に従う。`--var` で同じ名前を渡しても使わない（そう表示する）
 - `then` が待ち時間を過ぎても不合格のときは、確定する前に `--rejudge-model`（既定 sonnet）が同じ画像で判定し直す。sonnet が合格とすれば合格にするが、判定が分かれたことを警告に残す。`none` で無効
 - `--type-delay MS` で、文字入力の 1 文字ごとの間隔を指定する（ミリ秒。シナリオの `config.type_delay` より優先。既定 0 = 最速）。最初のキーの前も同じだけ待つ。Android は ASCII を uiautomator2 で 1 キーずつ（キーコードと Shift。US 配列）送り、ASCII 以外は間隔に関係なく一度に貼り付ける。iPhone は WebDriverAgent の `frequency`（1 秒あたりの文字数）、iOS シミュレータは 1 文字ずつの `axe type`、Web は Playwright の `delay`
 - `--backend api`（または環境変数 `UIAI_BACKEND=api`）で、Claude Code を通さずに Anthropic API を直接呼ぶ。`ANTHROPIC_API_KEY` が要り、従量課金になる。画像は最新の 2 枚だけを送るので、入力が伸びにくい。1 回の呼び出しは、やり直しを含めて 120 秒まで。実際の API では未検証（偽の応答での単体テストまで）

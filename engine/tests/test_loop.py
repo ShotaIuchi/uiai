@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from conftest import reply, v
+from uiai.ai.protocol import system_prompt
 
 BASIC = """
 name: t
@@ -75,16 +76,166 @@ def test_verify_action_during_recheck_is_executed(make_run):
     def script(msg, n):
         if n == 1:
             return reply({"type": "launch"})
-        if n == 2:
+        if n == 2:  # given in the call of "tap B": the `then`s are judged in a call of their own first
             return reply({"type": "tap", "x": 5, "y": 5}, verify=[v("X is shown", False)], purpose="verify", done=False)
+        if n == 3:
+            assert "only judge" in msg and "previous action: tap was NOT executed" in msg and '"tap B"' in msg
+            assert "previous do (the `then`s check its result): open the app" in msg
+            return reply({"type": "tap", "x": 5, "y": 5}, verify=[v("X is shown", False)], purpose="verify", done=False)
+        if n == 4:
+            assert "only judge" in msg and "re-check" in msg and "NOT executed" not in msg
+            return reply({"type": "none"}, verify=[v("X is shown")])
+        if n == 5:
+            assert "then to judge now: []" in msg and "previous do" not in msg
+            return reply()
+        return reply({"type": "none"}, verify=[v("Y is shown")])
+
+    res, drv, _, _ = make_run(BASIC, script)
+    assert [(a["type"], a.get("x")) for a in drv.acts] == [("launch", None), ("tap", 5), ("tap", 1)]
+    assert [c["kind"] for c in res.calls] == ["do", "do", "judge", "judge", "do", "judge"]
+    assert "判定のための操作: tap" in res.steps[1].notes
+    assert res.calls[1]["note"].startswith("判定のための操作は実行せず")
+    assert res.status == "pass"
+
+
+TABS = """
+name: t
+app: "http://x"
+steps:
+  - id: A
+    actions:
+      - do: "tap tab A"
+      - then: "field X is not shown"
+      - do: "tap tab B"
+      - then: "field X is shown"
+"""
+
+
+def test_the_do_given_as_a_verify_action_runs_only_after_the_thens_are_judged(make_run):
+    """The AI gave the tap on tab B (the `do`) as one that finishes the previous `do`: the negative `then` was
+    observed after it and failed. It is now judged on the screen tab A left, and tab B is tapped as a step."""
+    def script(msg, n):
+        if n == 1:
+            return reply({"type": "tap", "x": 1, "y": 1})
+        if n == 2:
+            return reply({"type": "tap", "x": 2, "y": 2}, verify=[v("field X is not shown", absence=True)],
+                         purpose="verify")
+        if n == 3:
+            assert "only judge" in msg
+            return reply({"type": "none"}, verify=[v("field X is not shown", absence=True)])
+        if n == 4:
+            assert "do: tap tab B" in msg and "then to judge now: []" in msg
+            return reply({"type": "tap", "x": 2, "y": 2})
+        return reply({"type": "none"}, verify=[v("field X is shown")])
+
+    res, drv, ai, _ = make_run(TABS, script)
+    assert [a["x"] for a in drv.acts] == [1, 2]
+    assert drv.watched == [2.0]  # observed on the screen tab A left (in call 3, before tab B is tapped)
+    assert [c["kind"] for c in res.calls] == ["do", "do", "judge", "do", "judge"]
+    assert res.status == "pass" and not any(s.warnings for s in res.steps)
+
+
+def test_a_scroll_to_judge_a_then_still_runs_in_the_call_of_the_do(make_run):
+    def script(msg, n):
+        if n == 1:
+            return reply({"type": "launch"})
+        if n == 2:
+            return reply({"type": "scroll", "direction": "down"}, verify=[v("X is shown", False)], purpose="verify",
+                         done=False)
         if n == 3:
             return reply(verify=[v("X is shown")])
         return reply({"type": "none"}, verify=[v("Y is shown")])
 
     res, drv, _, _ = make_run(BASIC, script)
-    assert [(a["type"], a.get("x")) for a in drv.acts] == [("launch", None), ("tap", 5), ("tap", 1)]
-    assert "判定のための操作: tap" in res.steps[2].notes
+    assert [a["type"] for a in drv.acts] == ["launch", "scroll", "tap"]
+    assert [c["kind"] for c in res.calls] == ["do", "do", "recheck", "judge"]
     assert res.status == "pass"
+
+
+def test_the_judge_only_call_still_finishes_the_previous_do(make_run):
+    """"save" left its confirmation open: the OK the AI gives in the call of the next `do` runs in the call that
+    judges the `then`s, and a negative `then` is observed only after it (an error shown after saving is caught)."""
+    y = """
+name: t
+app: "http://x"
+steps:
+  - id: A
+    actions:
+      - do: "save"
+      - then: "saved message is shown"
+      - then: "no error is shown"
+      - do: "open home"
+      - then: "home is shown"
+"""
+    drv = __import__("conftest").FakeDriver()
+    drv.watch_results = [True]
+    finish = {"type": "tap", "x": 7, "y": 7}
+
+    def script(msg, n):
+        if n == 1:
+            return reply()
+        if n in (2, 3):  # the call of "open home", then the one that judges on its own
+            assert n == 2 or "only judge" in msg
+            return reply(finish, verify=[v("saved message is shown", False), v("no error is shown", absence=True)],
+                         purpose="verify", done=False)
+        if n == 4:
+            return reply({"type": "none"}, verify=[v("saved message is shown"), v("no error is shown", absence=True)])
+        if "only judge" in msg and "no error" in msg:
+            return reply({"type": "none"}, verify=[v("no error is shown", False, absence=True)])
+        if "only judge" in msg:
+            return reply({"type": "none"}, verify=[v("home is shown")])
+        return reply({"type": "tap", "x": 3, "y": 3})
+
+    res, drv, ai, _ = make_run(y, script, driver=drv)
+    assert [a.get("x") for a in drv.acts] == [1, 7, 3]
+    assert drv.watched == [2.0]          # observed only after the confirmation was finished
+    assert [s.status for s in res.steps] == ["pass", "pass", "fail", "pass", "pass"]
+
+
+def test_the_rules_keep_a_do_to_what_it_says_and_its_actions_off_verify():
+    s = system_prompt("a screen", 10, 10, [])
+    assert 'A `do` that only says to tap or press one control (e.g. "「保存」をタップ") is done with that tap' in s
+    assert "check: leave it open. Unexpected dialogs" in s
+    assert 'always "step", also while `then`s are being judged' in s
+    assert "Never press anything in a dialog or screen that a `then`\n  refers to" in s
+    assert "a confirmation dialog it opened" not in s  # the example that read as "press the confirmation"
+
+
+def test_the_previous_do_is_not_given_across_a_reset(make_run):
+    y = """
+name: t
+app: "http://x"
+config:
+  on_failure: next_section
+steps:
+  - id: A
+    actions:
+      - do: "open"
+      - then: "X is shown"
+  - id: B
+    actions:
+      - then: "Y is shown"
+      - do: "tap"
+"""
+
+    def script(msg, n):
+        if n == 1:
+            return reply({"type": "launch"})
+        if n == 2:  # X, before the reset
+            assert "only judge" in msg and "previous do (the `then`s check its result): open" in msg
+            return reply({"type": "none"}, verify=[v("X is shown")])
+        if n == 3:  # Y: on the screen the reset left, not a result of "open"
+            assert '"Y is shown"' in msg and "previous do" not in msg
+            return reply(verify=[v("Y is shown")])
+        return reply({"type": "none"})
+
+    res, _, ai, _ = make_run(y, script)
+    assert res.status == "pass" and len(ai.msgs) == 3
+    # without the reset, Y is judged as a result of "open"
+    res, _, ai, _ = make_run(y.replace("on_failure: next_section", "on_failure: stop_scenario"), lambda m, n: (
+        reply({"type": "launch"}) if n == 1 else reply(verify=[v("X is shown"), v("Y is shown")])))
+    assert "previous do (the `then`s check its result): open" in ai.msgs[1] and '"Y is shown"' in ai.msgs[1]
+    assert res.status == "pass" and len(ai.msgs) == 2
 
 
 def test_do_failure_stops_the_scenario_and_marks_the_rest_not_run(make_run):

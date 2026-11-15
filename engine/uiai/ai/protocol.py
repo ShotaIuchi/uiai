@@ -36,7 +36,11 @@ Rules:
   Do not take detours through other screens or features; follow the path the `do` describes.
 - "purpose": "step" for actions that perform the `do`; "interrupt" when you dismiss an unexpected dialog/popup
   the scenario does not mention (cookie notice, permission prompt, update prompt) - then "done": false;
-  "verify" for actions taken only to judge a `then` (see below).
+  "verify" for actions taken only to judge a `then` (see below). An action that performs the current `do` is
+  always "step", also while `then`s are being judged.
+- A `do` that only says to tap or press one control (e.g. "「保存」をタップ") is done with that tap: "done": true. A
+  confirmation asking about what that control does (e.g. "上書きしますか？") is then its result, for the scenario to
+  check: leave it open. Unexpected dialogs (cookie notice etc.) are still dismissed as "interrupt", as above.
 - Error messages: if the screen shows an error (error dialog, "failed", "エラー", "失敗", network error...)
   that neither the `do` nor the `then`s mention, do NOT dismiss it: set "error_shown": true and action "fail"
   with the message in "reason".
@@ -46,8 +50,11 @@ Judging `then`:
 - "verify" has one entry per given `then`, in the same order (empty list if none). Judge only from the current
   screenshot; pass=false if it is not satisfied (the runner may re-check on a fresh screen).
 - "absence": true if the `then` asserts that something is NOT shown (e.g. "エラーが表示されないこと").
-- If the previous step has not finished (e.g. a confirmation dialog it opened is still shown), return the action
-  that finishes it, with "purpose": "verify" - also when the `then`s pass.
+- The `then`s check the result of the previous `do` (given in the message). If that `do` asked for an outcome it
+  has not reached yet (e.g. the confirmation of that very outcome is still open), return the action that finishes
+  it, with "purpose": "verify" - also when the `then`s pass. Not for a `do` that only says to tap or press something
+  (e.g. "「保存」をタップ"): what that opened is its result. Never press anything in a dialog or screen that a `then`
+  refers to.
 - If what a `then` refers to may be outside the visible area (e.g. further down a list), return a scroll with
   "purpose": "verify".
 - [strict] `then`: exact character-by-character match. Distinguish full-width/half-width characters, ー/-/−,
@@ -165,6 +172,7 @@ class Ask:
     step_no: int = 0
     step_total: int = 0
     thens: list[tuple] | None = None   # (text, strict) or (text, strict, {variable: what to read})
+    prev_do: str | None = None  # the `do` whose result the `then`s check
     attempt: int = 0
     recheck: bool = False
     feedback: str = ""          # result of the previous action
@@ -183,6 +191,10 @@ def build_message(a: Ask) -> str:
     if a.recheck:
         parts.append("(re-check: a `then` failed on the previous screen; this is a fresh screen)")
     thens = [then_line(*t) for t in (a.thens or [])]
+    if thens and a.prev_do:
+        # which `do` the `then`s are about: with only their text, the AI took the current `do`'s action (the next tab)
+        # for one that finished the previous `do` (a reported run)
+        parts.append(f"previous do (the `then`s check its result): {a.prev_do}")
     parts.append("then to judge now: " + json.dumps(thens, ensure_ascii=False))
     parts.append("screen: (see the screenshot)")
     return "\n".join(parts)

@@ -173,6 +173,18 @@ class ScenarioRunner:
         """A pending `then` for Ask: (text, strict, {variable: what to read})."""
         return t.text, t.item.strict, {n: render(w, self.values, self.secrets) for n, w in t.item.save.items()}
 
+    def prev_do(self, it: Item) -> str | None:
+        """The `do` whose result the `then` `it` checks: the last one before it, unless a reset
+        (on_failure: next_section) or another device comes between."""
+        before = [x for x in self.items if x.kind == "do" and x.index < it.index]
+        if not before:
+            return None
+        d = before[-1]
+        if self.steps[d.index].platform != self.steps[it.index].platform or (
+                d.section != it.section and self.cfg.on_failure == "next_section"):
+            return None
+        return self.steps[d.index].text
+
     def read_saves(self, it: Item, got) -> tuple[dict[str, str], str]:
         """The values a passing verdict read for the `save` of `it`, or why they cannot be used."""
         got = got if isinstance(got, dict) else {}
@@ -453,9 +465,8 @@ class ScenarioRunner:
             return False
         step = self.steps[t.item.index]
         label = f"再判定（{self.rejudge_model}）"
-        before = [x for x in self.items if x.kind == "do" and x.index < t.item.index]
         text, strict, save = self.then_spec(t)
-        msg = build_judge_message(text, strict, self.steps[before[-1].index].text if before else None, save)
+        msg = build_judge_message(text, strict, self.prev_do(t.item), save)
         try:
             s = self.rejudge_factory(judge_system_prompt(self.drv.description, self.drv.iw, self.drv.ih,
                                                          save=bool(t.item.save)))
@@ -560,7 +571,8 @@ class ScenarioRunner:
             return dict(act, text=filled, **({"secret": True} if filled != text else {}))
         return act
 
-    def judge_only(self, pending: list[ThenState]) -> None:
+    def judge_only(self, pending: list[ThenState], feedback: str = "") -> None:
+        """Judge the pending `then`s in calls of their own (no `do` to act on). feedback: for the first call."""
         while True:
             undecided = [t for t in pending if t.final is None]
             if not undecided:
@@ -571,12 +583,13 @@ class ScenarioRunner:
                     self.finalize(t, "fail", "撮影できない画面の可能性（画面が真っ黒。FLAG_SECURE など）")
                 return
             a = Ask(section=self.steps[undecided[0].item.index].section, do=None,
-                    thens=[self.then_spec(t) for t in undecided],
-                    recheck=any(t.started for t in undecided))
+                    thens=[self.then_spec(t) for t in undecided], prev_do=self.prev_do(undecided[0].item),
+                    recheck=any(t.started for t in undecided), feedback=feedback)
+            feedback = ""
             res, rec = self.ask(a, obs, "judge", None)
             act = res["action"] or {}
-            # also when every `then` is decided: what finishes the last `do` (e.g. the OK of a confirmation it
-            # opened) runs here, as it would in the next `do`'s call - the next `do` would find it in its way
+            # also when every `then` is decided: what finishes the last `do` (e.g. the OK of the confirmation of
+            # the outcome it asked for) runs here - the next `do` would find it in its way
             if self.judge(undecided, res, rec) or (
                     res["purpose"] in ("verify", "interrupt") and act.get("type") in EXECUTABLE):
                 self.recheck_action(res, rec, self.steps[undecided[0].item.index])
@@ -606,14 +619,29 @@ class ScenarioRunner:
                 fb = ""
             a = Ask(section=it.section, do=text, do_strict=it.strict, do_optional=it.optional,
                     step_no=do_no, step_total=n_do,
-                    thens=[self.then_spec(t) for t in undecided], attempt=actions,
+                    thens=[self.then_spec(t) for t in undecided],
+                    prev_do=self.prev_do(undecided[0].item) if undecided else None, attempt=actions,
                     recheck=any(t.started for t in undecided), feedback=fb)
             res, rec = self.ask(a, obs, "do" if not undecided or not any(t.started for t in undecided) else "recheck",
                                 it.index)
+            act = res["action"] or {}
+            if undecided and res["purpose"] == "verify" and act.get("type") in EXECUTABLE and act["type"] != "scroll":
+                # An action that finishes the previous `do` changes the screen its `then`s are judged on, and here
+                # the AI may give the current `do`'s own action as one (in a reported run it tapped the next tab, and
+                # the `then` about the tab before failed on the screen that led to). The `then`s are judged in calls
+                # of their own first: without a `do` to act on, an action they return can only finish the previous one.
+                rec["note"] = "判定のための操作は実行せず、then を判定だけの呼び出しで判定する"
+                self.log_call(rec)
+                self.judge_only(pending, feedback=(
+                    f"{act['type']} was NOT executed: the `do` \"{text}\" waits until these `then`s are judged, and "
+                    "its actions are \"purpose\": \"step\". Return a \"verify\" action only to finish the previous "
+                    "`do` or to scroll."))
+                if self.res.stop_all:
+                    raise StopAll()
+                continue  # ask for the `do` again, on the screen now
             if undecided and self.judge(undecided, res, rec):
                 self.recheck_action(res, rec, step)
                 self.log_call(rec)
-                act = res["action"] or {}
                 if act.get("type") in EXECUTABLE:
                     # Tell the AI whether its action ran: in phase 4 it took an unexecuted tap for one that
                     # "did not work", tapped again, and finally failed the `do`.
@@ -625,7 +653,6 @@ class ScenarioRunner:
             if self.res.stop_all:
                 self.log_call(rec)
                 raise StopAll()
-            act = res["action"] or {}
             t = act.get("type")
             if res["error_shown"]:
                 self.log_call(rec)

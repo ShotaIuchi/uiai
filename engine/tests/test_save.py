@@ -385,10 +385,10 @@ steps:
     def script(msg, n):
         if "注文番号が表示されていること [save" in msg:
             return reply({"type": "none"}, verify=[v("注文番号が表示されていること", save={"order": "A-123"})])
+        if "only judge" in msg:  # (it names the `do` before as well)
+            return reply({"type": "none"}, verify=[v("見つかること")])
         if "「A-123」を検索する" in msg:
             return reply()
-        if "only judge" in msg:
-            return reply({"type": "none"}, verify=[v("見つかること")])
         return reply()
 
     res, *_ = make_run(text, script, driver=phone, platform="android", others={"web": (web, "http://w")})

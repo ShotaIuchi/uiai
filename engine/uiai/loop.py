@@ -17,7 +17,7 @@ from typing import Callable
 
 from .ai import AIError
 from .ai.protocol import (Ask, build_judge_message, build_message, judge_system_prompt, parse_judge, parse_reply,
-                          system_prompt)
+                          strip_tags, system_prompt)
 from .drivers.base import STALE, Driver, DriverError
 from .events import EventLog
 from .redact import Redactor, traceback_to_stderr
@@ -75,6 +75,7 @@ class StepResult:
     status: str = "not_run"     # pass | fail | not_run | skip (an optional `do` that failed)
     reason: str = ""
     read: str | None = None
+    saved: dict[str, str] = field(default_factory=dict)  # `save`: the values the passed `then` read
     warnings: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     calls: list[int] = field(default_factory=list)
@@ -88,6 +89,7 @@ class ThenState:
     observed: bool = False
     absence: bool = False
     final: str | None = None
+    saved: dict[str, str] = field(default_factory=dict)  # what its last passing verdict read (`save`)
 
 
 @dataclass
@@ -133,13 +135,16 @@ class ScenarioRunner:
         self.cur: str | None = None
         self.parked: dict[str, dict] = {}  # DEVICE_STATE of the devices not in use
         self.notice = ""  # to put before the next message (a device just switched to, another app)
-        self.ai_factory, self.values, self.out = ai_factory, values, out_dir
+        # its own copy: the values read from the screen (`save`) are this run's (a scenario run on several
+        # platforms at once is given the same dict)
+        self.ai_factory, self.values, self.out = ai_factory, dict(values), out_dir
         self.rejudge_factory, self.rejudge_model = rejudge_factory, rejudge_model
         self.events, self.redact, self.print = events, redactor, printer
         self.cfg = sc.config
         # ms between typed characters: --type-delay wins over config.type_delay
         self.type_delay = sc.config.type_delay if type_delay is None else type_delay
         self.secrets = sc.secret_names
+        self.saved_names = sc.saved_names
         self.ai = None
         self.res = ScenarioResult(sc.name, str(sc.path), platform, target, model, backend=backend,
                                   others={p: t for p, (_, t) in self.targets.items() if p != platform},
@@ -163,6 +168,48 @@ class ScenarioRunner:
     # ------------------------------------------------------------------ helpers
     def text(self, it: Item) -> str:
         return render(it.raw, self.values, self.secrets)
+
+    def then_spec(self, t: ThenState) -> tuple:
+        """A pending `then` for Ask: (text, strict, {variable: what to read})."""
+        return t.text, t.item.strict, {n: render(w, self.values, self.secrets) for n, w in t.item.save.items()}
+
+    def read_saves(self, it: Item, got) -> tuple[dict[str, str], str]:
+        """The values a passing verdict read for the `save` of `it`, or why they cannot be used."""
+        got = got if isinstance(got, dict) else {}
+        out: dict[str, str] = {}
+        for n in it.save:
+            val = got.get(n)
+            val = "" if val is None or isinstance(val, (bool, dict, list)) else str(val).strip()
+            if not val:
+                return {}, f"`save` の {n} の値を AI が返さなかった"
+            if val.endswith(("…", "...")):
+                return {}, f"`save` の {n} の値が省略されている可能性（{val}）"
+            out[n] = val
+        return out, ""
+
+    def missing(self, it: Item) -> str:
+        """Why `it` cannot run: a variable it uses has no value, as the `then` that reads it from the screen failed
+        or was not run. "" if it can."""
+        for n in it.uses:
+            if n in self.saved_names and n not in self.values:
+                src = [x for x in self.items if n in x.save and x.index < it.index]
+                s = self.steps[src[-1].index] if src else None
+                state = "が不合格" if s and s.status == "fail" else "を実行していない"
+                return f"変数 ({n}) の値がない（値を読み取る then「{s.text if s else '?'}」{state}）"
+        return ""
+
+    def settle(self, it: Item, pending: list[ThenState]) -> None:
+        """Judge the pending `then`s now, on the screen the last `do` left, if `it` needs a value one of them reads
+        (`save`: it is otherwise judged with the next `do`, as other `then`s), or cannot run for want of one (they
+        are judged before the scenario stops)."""
+        undecided = [t for t in pending if t.final is None]
+        if not undecided:
+            return
+        uses = set(it.uses) & self.saved_names
+        if uses & {n for t in undecided for n in t.item.save} or (it.kind == "do" and uses - set(self.values)):
+            self.judge_only(pending)
+            if self.res.stop_all:
+                raise StopAll()
 
     def ev(self, type_: str, **kw) -> None:
         if self.multi and self.cur and self.cur != self.platform and type_ in ("fail", "skip", "warning", "error"):
@@ -257,7 +304,7 @@ class ScenarioRunner:
         self.ai = None  # the conversation of the device left is parked, not closed
         self.system = system_prompt(self.drv.description, self.drv.iw, self.drv.ih,
                                     self.cfg.interrupts.allow, sorted(self.secrets),
-                                    optional=any(it.optional for it in self.items))
+                                    optional=any(it.optional for it in self.items), save=bool(self.saved_names))
         self.open_session()
         self.app, self.section_first_do = app, True
         # A blank page did not tell the AI that the admin page of "open the admin page and ..." was not open yet:
@@ -317,7 +364,7 @@ class ScenarioRunner:
         rec = {
             "n": n, "t": round(self.elapsed(), 2), "kind": kind, "section": a.section,
             "step": None if step_index is None else step_index + 1, "do": a.do,
-            "thens": [t for t, _ in a.thens or []], "verify": res["verify"], "action": res["action"],
+            "thens": [t[0] for t in a.thens or []], "verify": res["verify"], "action": res["action"],
             "purpose": res["purpose"], "dialog": res["dialog"], "allowed": res["allowed"],
             "error_shown": res["error_shown"], "done": res["done"], "act_result": "",
             "image": img, "iw": obs.width, "ih": obs.height, "screen_changed": obs.changed,
@@ -359,7 +406,7 @@ class ScenarioRunner:
         passed_absence: list[ThenState] = []
         for i, t in enumerate(undecided):
             v = verdicts[i] if len(verdicts) == len(undecided) else next(
-                (x for x in verdicts if str(x.get("then", "")).replace(" [strict]", "") == t.text), None)
+                (x for x in verdicts if strip_tags(str(x.get("then", ""))) == t.text), None)
             if v is None:
                 v = {"pass": False, "reason": "AI が判定を返さなかった"}
             t.started = t.started or now
@@ -369,7 +416,12 @@ class ScenarioRunner:
             t.absence = t.absence or v.get("absence") in (True, "true", "True")
             if step.calls[-1:] != [rec["n"]]:
                 step.calls.append(rec["n"])
-            if v.get("pass") in (True, "true", "True"):
+            ok = v.get("pass") in (True, "true", "True")
+            if t.item.save:
+                t.saved, problem = self.read_saves(t.item, v.get("save")) if ok else ({}, "")
+                if problem:
+                    ok, step.reason = False, problem
+            if ok:
                 if t.absence and t.item.observe > 0 and not t.observed:
                     passed_absence.append(t)
                 else:
@@ -398,9 +450,11 @@ class ScenarioRunner:
         step = self.steps[t.item.index]
         label = f"再判定（{self.rejudge_model}）"
         before = [x for x in self.items if x.kind == "do" and x.index < t.item.index]
-        msg = build_judge_message(t.text, t.item.strict, self.steps[before[-1].index].text if before else None)
+        text, strict, save = self.then_spec(t)
+        msg = build_judge_message(text, strict, self.steps[before[-1].index].text if before else None, save)
         try:
-            s = self.rejudge_factory(judge_system_prompt(self.drv.description, self.drv.iw, self.drv.ih))
+            s = self.rejudge_factory(judge_system_prompt(self.drv.description, self.drv.iw, self.drv.ih,
+                                                         save=bool(t.item.save)))
             try:
                 reply, meta = s.ask(msg, (self.out / rec["image"]).read_bytes())
             finally:
@@ -415,6 +469,7 @@ class ScenarioRunner:
             "then": t.text, "model": self.rejudge_model, "model_id": getattr(s, "model_id", ""),
             "pass": None if r is None else r["pass"],
             "reason": reply[:200] if r is None else r["reason"], "read": None if r is None else r["read"],
+            **({"save": r["save"]} if r and r["save"] else {}),
             "llm_s": meta["wall_s"], "in_tokens": meta["in_tokens"], "out_tokens": meta["out_tokens"]})
         if r is None:
             step.notes.append(f"{label}の応答を解釈できない")
@@ -424,6 +479,11 @@ class ScenarioRunner:
         if not r["pass"]:
             step.reason = f"{step.reason}（{label}でも不合格: {r['reason']}）"
             return False
+        if t.item.save:
+            t.saved, problem = self.read_saves(t.item, r["save"])
+            if problem:
+                step.reason = f"{step.reason}（{label}は合格だが、{problem}）"
+                return False
         first = step.reason
         step.reason = r["reason"]
         if t.item.strict:
@@ -438,13 +498,22 @@ class ScenarioRunner:
         step.status = status
         if reason is not None:
             step.reason = reason
+        if status == "pass" and t.item.save:
+            self.values.update(t.saved)
+            step.saved = dict(t.saved)
+            for n, val in t.saved.items():
+                self.print(self.redact.text(f"    ⤷ ({n}) = 「{val}」"))
+        unsaved = list(t.item.save) if status == "fail" else []
+        if unsaved:
+            step.notes.append(f"変数 {'、'.join(unsaved)} の値は決まらない（使うステップは実行しない）")
         if status == "fail":
             self.res.stop_all = self.cfg.on_failure == "stop_all"
             img = self.res.calls[step.calls[-1] - 1]["image"] if step.calls else None
             self.ev("fail", section=step.section, step=step.index + 1, kind="then", text=step.text,
                     reason=step.reason, read=step.read, image=str(self.out / img) if img else None,
-                    **({"not_run": not_run} if not_run else {}))
+                    **({"not_run": not_run} if not_run else {}), **({"unsaved": unsaved} if unsaved else {}))
             self.print(self.redact.text(f"  ✗ then 不合格 [{step.section}] 「{step.text}」: {step.reason}"
+                                        + (f"（値が決まらない変数: {'、'.join(unsaved)}）" if unsaved else "")
                                         + (f"（残り {not_run} ステップは未実行）" if not_run else "")))
 
     def recheck_action(self, res: dict, rec: dict, step: StepResult | None) -> None:
@@ -498,7 +567,7 @@ class ScenarioRunner:
                     self.finalize(t, "fail", "撮影できない画面の可能性（画面が真っ黒。FLAG_SECURE など）")
                 return
             a = Ask(section=self.steps[undecided[0].item.index].section, do=None,
-                    thens=[(t.text, t.item.strict) for t in undecided],
+                    thens=[self.then_spec(t) for t in undecided],
                     recheck=any(t.started for t in undecided))
             res, rec = self.ask(a, obs, "judge", None)
             if self.judge(undecided, res, rec):
@@ -529,7 +598,7 @@ class ScenarioRunner:
                 fb = ""
             a = Ask(section=it.section, do=text, do_strict=it.strict, do_optional=it.optional,
                     step_no=do_no, step_total=n_do,
-                    thens=[(t.text, t.item.strict) for t in undecided], attempt=actions,
+                    thens=[self.then_spec(t) for t in undecided], attempt=actions,
                     recheck=any(t.started for t in undecided), feedback=fb)
             res, rec = self.ask(a, obs, "do" if not undecided or not any(t.started for t in undecided) else "recheck",
                                 it.index)
@@ -617,6 +686,24 @@ class ScenarioRunner:
                                     + (f"（残り {len(rest)} ステップは未実行）" if rest else "")))
         self.res.stop_all = self.cfg.on_failure == "stop_all"
 
+    def not_run(self, it: Item, why: str, section_rest: list[Item]) -> bool:
+        """`it` cannot run for want of a value read from the screen (see missing). A `then` is left unjudged and an
+        optional `do` skipped, and the scenario goes on; another `do` stops it as a failed `do` does
+        (on_failure), without a second notification: the failed `then` was one. True: stop the scenario."""
+        step = self.steps[it.index]
+        step.reason = why
+        if it.kind == "then":
+            self.print(self.redact.text(f"  ⏹ then 未実行 [{it.section}] 「{step.text}」: {why}"))
+            return False
+        if it.optional:
+            self.skip_do(it, why)
+            return False
+        to_end = self.cfg.on_failure != "next_section"
+        rest = [x for x in self.items if x.index > it.index] if to_end else section_rest
+        self.print(self.redact.text(f"  ⏹ do 未実行 [{it.section}] 「{step.text}」: {why}"
+                                    + (f"（残り {len(rest)} ステップは未実行）" if rest else "")))
+        return to_end
+
     def skip_do(self, it: Item, reason: str) -> None:
         """An optional `do` failed: record it as skipped and go on. Its `then`s are judged as usual."""
         step = self.steps[it.index]
@@ -662,6 +749,28 @@ class ScenarioRunner:
                     self.drv.reset(self.app, self.cfg)
                     self.section_first_do = True
                 for k, it in enumerate(sec.items):
+                    try:
+                        self.settle(it, pending)
+                    except StopScenario as e:  # the scenario's time ran out: the rest is not run
+                        self.fail_pending(pending, str(e), not_run=sum(1 for x in self.items if x.index >= it.index))
+                        stop = True
+                        break
+                    except StopAll:
+                        self.print("  ■ on_failure: stop_all — 以降は実行しない")
+                        stop = True
+                        break
+                    finally:
+                        pending = [t for t in pending if t.final is None]
+                    why = self.missing(it)
+                    if why:
+                        if self.not_run(it, why, sec.items[k + 1:]):
+                            stop = True
+                            break
+                        if it.kind == "then" or it.optional:
+                            continue
+                        break  # on_failure: next_section
+                    # with the values known now (those read from the screen by earlier `then`s)
+                    self.steps[it.index].text = self.text(it)
                     if it.kind == "then":
                         self.drv.wait_after_action(it.wait)
                         pending.append(ThenState(it, self.steps[it.index].text))

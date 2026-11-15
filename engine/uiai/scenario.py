@@ -101,10 +101,16 @@ class Item:
     timeout: float = DEFAULT_THEN_TIMEOUT   # then only
     observe: float = DEFAULT_OBSERVE        # then only
     index: int = 0          # position in the whole scenario (0-based)
+    save: dict[str, str] = field(default_factory=dict)  # then only: {variable: what to read on the screen}
 
     @property
     def replayed(self) -> bool:
         return self.origin != self.section
+
+    @property
+    def uses(self) -> list[str]:
+        """The variables it needs: in its text and in what its `save` reads."""
+        return list(dict.fromkeys(m.group(1) for t in (self.raw, *self.save.values()) for m in VAR_RE.finditer(t)))
 
 
 @dataclass
@@ -140,6 +146,11 @@ class Scenario:
     @property
     def secret_names(self) -> set[str]:
         return {n for n, v in self.variables.items() if v.secret}
+
+    @property
+    def saved_names(self) -> set[str]:
+        """Variables that `then`s read from the screen (`save`): they get their values while running."""
+        return {n for it in self.items for n in it.save}
 
     def untargeted(self, platform: str) -> list[str]:
         """Included sections that would run, in a run on `platform`, where their own scenario has no target."""
@@ -218,6 +229,7 @@ def _read_scenario(path: Path, parents: tuple[Path, ...] = ()) -> _Read:
         dict(own_app) if isinstance(own_app, dict) else {p: own_app for p in candidates(own_app)})
     variables = data.get("variables") or {}
     variables = dict(variables) if isinstance(variables, dict) else None
+    from_includes: set[str] = set()  # variables only included scenarios declare
     steps: list = []
     metas: list[_Step] = []
     for i, sec in enumerate(raw):
@@ -269,6 +281,7 @@ def _read_scenario(path: Path, parents: tuple[Path, ...] = ()) -> _Read:
             for n, spec in (sub.data.get("variables") or {}).items():
                 if n not in variables:
                     variables[n] = spec
+                    from_includes.add(n)
                 elif parse_variable(n, spec).secret and not parse_variable(n, variables[n]).secret:
                     variables[n] = _as_secret(variables[n])  # secret if either side says so
         for s, m in zip(sub.data["steps"], sub.steps):
@@ -285,8 +298,19 @@ def _read_scenario(path: Path, parents: tuple[Path, ...] = ()) -> _Read:
     if merged_app is not None:
         data["app"] = merged_app
     if variables is not None:
+        # an included scenario declares a variable (with no value, say) that is read from the screen (`save`)
+        # here: the value read is used (the including scenario wins, as for its own variables)
+        for n in from_includes & _saved_names(steps):
+            del variables[n]
         data["variables"] = variables
     return _Read(data, dups, metas, own_app, issues)
+
+
+def _saved_names(steps: Any) -> set[str]:
+    """The variable names the `save`s of the `then`s in `steps` give (as written, valid or not)."""
+    return {str(n) for s in (steps if isinstance(steps, list) else []) if isinstance(s, dict)
+            for a in (s.get("actions") if isinstance(s.get("actions"), list) else [])
+            if isinstance(a, dict) and "then" in a and isinstance(a.get("save"), dict) for n in a["save"]}
 
 
 def _as_secret(spec: Any) -> Any:
@@ -410,6 +434,8 @@ def check_data(data: Any, duplicates: list[tuple[Any, int]] | None = None, origi
     # steps
     if origins is None or len(origins) != len(steps):
         origins = [_Step(f"steps[{i}]") for i in range(len(steps))]
+    saves = _check_saves(steps, origins, variables, err)
+    saved = set(saves)
     run_app = own_app if own_app is not None else app
     run_cands = candidates(run_app) if isinstance(run_app, (str, dict)) and run_app else []
     ons = [s.get("on") if isinstance(s, dict) and s.get("on") in PLATFORMS else None for s in steps]
@@ -519,10 +545,11 @@ def check_data(data: Any, duplicates: list[tuple[Any, int]] | None = None, origi
                         err("E015", f"`{k}` は 0 以上の数（秒）", aw)
             if "verify" in a:
                 warn("W007", "`verify` は廃止（AI の画像判定に一本化）。無視する", aw)
-            for m in VAR_RE.finditer(text):
+            save = a.get("save") if kind == "then" and isinstance(a.get("save"), dict) else {}
+            for m in (m for t in (text, *save.values()) if isinstance(t, str) for m in VAR_RE.finditer(t)):
                 name = m.group(1)
                 used_vars.add(name)
-                if name not in variables:
+                if name not in variables and name not in saved:
                     err("E030", f"未定義の変数 `({name})`", aw)
                 elif kind == "then" and name in secret_names:
                     err("E033", f"秘密の変数 `({name})` は `then` で使えない（AI に値を渡さないため照合できない）", aw)
@@ -539,9 +566,15 @@ def check_data(data: Any, duplicates: list[tuple[Any, int]] | None = None, origi
         if cyc:
             err("E023", "`replay` が循環している: " + " → ".join(cyc))
 
+    if saved:
+        _check_save_order(steps, origins, saved, err)
+
     for name in variables:
         if isinstance(name, str) and name not in used_vars:
             warn("W005", f"変数 `{name}` が使われていない")
+    for name, places in saves.items():
+        if name not in used_vars:
+            warn("W005", f"`save` した変数 `{name}` が使われていない", places[0])
 
     timeout = cfg.get("timeout")
     n_do = sum(1 for s in steps if isinstance(s, dict) for a in (s.get("actions") or [])
@@ -550,6 +583,88 @@ def check_data(data: Any, duplicates: list[tuple[Any, int]] | None = None, origi
         warn("W008", f"`config.timeout`（{timeout} 秒）が短い可能性。AI 方式は 1 ステップ 3〜6 秒かかる"
                      f"（目安: `do` {n_do} 個 × {SECONDS_PER_DO_HINT} 秒 = {n_do * SECONDS_PER_DO_HINT} 秒以上）")
     return issues
+
+
+def _check_saves(steps: list, origins: list[_Step], variables: dict, err) -> dict[str, list[str]]:
+    """E035/E036: the `save`s of the `then`s. Returns {variable: where it is saved} of the valid ones."""
+    saves: dict[str, list[str]] = {}
+    for i, sec in enumerate(steps):
+        acts = sec.get("actions") if isinstance(sec, dict) else None
+        for j, a in enumerate(acts if isinstance(acts, list) else []):
+            if not isinstance(a, dict) or "save" not in a:
+                continue
+            aw = f"{origins[i].where}（{sec.get('id', '')}） actions[{j}]"
+            save = a["save"]
+            if "then" not in a:
+                err("E035", "`save` は `then` にだけ書ける", aw)
+            elif not isinstance(save, dict) or not save:
+                err("E035", "`save` は「変数名: 画面で読み取る内容」のマッピング", aw)
+            else:
+                for n, what in save.items():
+                    if not isinstance(n, str) or not NAME_RE.match(n):
+                        err("E035", f"`save` の変数名 `{n}` が不正（英字か _ で始まり、英数字と _ のみ）", aw)
+                    elif not isinstance(what, str) or not what.strip():
+                        err("E035", f"`save` の `{n}` に、画面で読み取る内容を書く", aw)
+                    else:
+                        saves.setdefault(n, []).append(aw)
+    for n, places in saves.items():
+        if n in variables:
+            err("E036", f"変数 `{n}` が `variables` と `save` の両方にある（画面から読み取るなら `variables` から消す）",
+                places[0])
+        if len(places) > 1:
+            err("E036", f"変数 `{n}` を 2 か所以上で `save` している（{'、'.join(places)}）", places[1])
+    return saves
+
+
+def _check_save_order(steps: list, origins: list[_Step], saved: set[str], err) -> None:
+    """E037: a variable read from the screen (`save`) used before, in run order, the `then` that reads it."""
+    done: set[str] = set()
+    reported: set[tuple[str, str]] = set()
+    for kind, a, aw in _run_order(steps, origins):
+        save = a.get("save") if kind == "then" and isinstance(a.get("save"), dict) else {}
+        for t in (a.get(kind), *save.values()):  # its own text and what it reads come before what it saves
+            for n in (m.group(1) for m in VAR_RE.finditer(t if isinstance(t, str) else "")):
+                if n in saved and n not in done and (aw, n) not in reported:
+                    reported.add((aw, n))
+                    err("E037", f"変数 `({n})` を、画面から値を読み取る `save` より前で使っている（値がまだない）", aw)
+        done |= {n for n in save if n in saved}
+
+
+def _run_order(steps: list, origins: list[_Step]) -> list[tuple[str, dict, str]]:
+    """(kind, action, where) of each `do`/`then` in run order, with the `do`s that `replay`s run again (as
+    _expand does). Broken entries and `replay`s are passed over: other rules report them."""
+    ids = [str(s.get("id")) for s in steps if isinstance(s, dict)]
+    by_id = {str(s.get("id")): (i, s) for i, s in enumerate(steps) if isinstance(s, dict)}
+
+    def acts(s: dict) -> list[tuple[int, dict]]:
+        a = s.get("actions")
+        return [(j, x) for j, x in enumerate(a) if isinstance(x, dict)] if isinstance(a, list) else []
+
+    def replayed(s: dict, at: str, stack: tuple[str, ...]) -> list[tuple[str, dict, str]]:
+        r = s.get("replay")
+        if not isinstance(r, dict):
+            return []
+        f, t = str(r.get("from")), str(r.get("to"))
+        if f not in ids or t not in ids or ids.index(f) > ids.index(t):
+            return []
+        out: list[tuple[str, dict, str]] = []
+        for sid in ids[ids.index(f): ids.index(t) + 1]:
+            if sid in stack:  # a cycle (E023)
+                return out
+            _, src = by_id[sid]
+            out += replayed(src, at, stack + (sid,))
+            out += [("do", x, f"{at} replay → {sid} actions[{j}]") for j, x in acts(src) if "do" in x]
+        return out
+
+    order: list[tuple[str, dict, str]] = []
+    for i, s in enumerate(steps):
+        if not isinstance(s, dict):
+            continue
+        at = f"{origins[i].where}（{s.get('id', '')}）"
+        order += replayed(s, at, (str(s.get("id")),))
+        order += [("do" if "do" in x else "then", x, f"{at} actions[{j}]") for j, x in acts(s)
+                  if "do" in x or "then" in x]
+    return order
 
 
 def _check_app(app: Any, err) -> None:
@@ -659,7 +774,8 @@ def _expand(steps: list[dict], cfg: Config, origins: list[_Step]) -> list[Sectio
     def make(a: dict, kind: str, section: str, origin: str) -> Item:
         strict = a.get("strict", cfg.strict)
         it = Item(kind, a[kind], section, origin, strict=bool(strict), wait=float(a.get("wait") or 0),
-                  optional=kind == "do" and a.get("optional") is True)
+                  optional=kind == "do" and a.get("optional") is True,
+                  save={str(n): str(w) for n, w in a["save"].items()} if kind == "then" and a.get("save") else {})
         if kind == "then":
             it.timeout = float(a.get("timeout", cfg.then_timeout))
             it.observe = float(a.get("observe", DEFAULT_OBSERVE))

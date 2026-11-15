@@ -54,11 +54,16 @@ def _on(res: ScenarioResult, platform: str | None) -> str:
     return f" @ {platform}" if platform and platform != res.platform else ""
 
 
+def _saved(d: dict | None) -> str:
+    """Values read from the screen (`save`): `name = 「value」`, …"""
+    return "、".join(f"{n} = 「{v}」" for n, v in (d or {}).items()) if isinstance(d, dict) else ""
+
+
 def _report_md(res: ScenarioResult) -> str:
     lines = [f"# {res.name} @ {res.platform}", "", *_meta_lines(res), "", "## ステップ", "",
              "| # | セクション | 種別 | 内容 | 結果 | 理由・読み取った文字 | 警告・メモ |", "|---|---|---|---|---|---|---|"]
     for s in res.steps:
-        why = s.reason + (f"（読み取り: {s.read}）" if s.read else "")
+        why = s.reason + (f"（読み取り: {s.read}）" if s.read else "") + (f"（保存: {_saved(s.saved)}）" if s.saved else "")
         extra = "; ".join([f"⚠️ {w}" for w in s.warnings] + s.notes)
         sec = s.section + (f"（replay: {s.origin}）" if s.origin != s.section else "") + _on(res, s.platform)
         lines.append(f"| {s.index + 1} | {_md(sec)} | {s.kind}{' [strict]' if s.strict else ''} | {_md(s.text)} "
@@ -99,7 +104,8 @@ def _report_html(res: ScenarioResult) -> str:
     rows = []
     for s in res.steps:
         cls = "warn" if (s.status == "pass" and s.warnings) or s.status == "skip" else s.status
-        why = e(s.reason) + (f"<br><span class=small>読み取り: <code>{e(s.read)}</code></span>" if s.read else "")
+        why = e(s.reason) + (f"<br><span class=small>読み取り: <code>{e(s.read)}</code></span>" if s.read else "") \
+            + (f"<br><span class=small>保存: <code>{e(_saved(s.saved))}</code></span>" if s.saved else "")
         extra = "<br>".join([f"<span class=warn>⚠️ {e(w)}</span>" for w in s.warnings] + [e(n) for n in s.notes])
         calls = " ".join(f'<a href="#c{n}">#{n}</a>' for n in s.calls)
         rows.append(f"<tr><td>{s.index + 1}</td><td>{e(s.section + _on(res, s.platform))}</td><td>{s.kind}{' [strict]' if s.strict else ''}</td>"
@@ -117,12 +123,15 @@ def _report_html(res: ScenarioResult) -> str:
                 pass
         verdicts = "".join(
             f"<li class={'pass' if v.get('pass') else 'fail'}>{'✅' if v.get('pass') else '❌'} {e(str(v.get('then', '')))}"
-            f" — {e(str(v.get('reason', '')))}" + (f" <code>{e(str(v['read']))}</code>" if v.get("read") else "") + "</li>"
+            f" — {e(str(v.get('reason', '')))}" + (f" <code>{e(str(v['read']))}</code>" if v.get("read") else "")
+            + (f" 保存: <code>{e(_saved(v['save']))}</code>" if _saved(v.get("save")) else "") + "</li>"
             for v in c["verify"])
         verdicts += "".join(
             f"<li class={'pass' if r.get('pass') else 'fail'}>↻ 再判定（{e(str(r.get('model')))}）"
             f"{'✅' if r.get('pass') else '❌'} {e(str(r.get('then', '')))} — {e(str(r.get('reason', '')))}"
-            + (f" <code>{e(str(r['read']))}</code>" if r.get("read") else "") + f" · {r.get('llm_s')}s</li>"
+            + (f" <code>{e(str(r['read']))}</code>" if r.get("read") else "")
+            + (f" 保存: <code>{e(_saved(r['save']))}</code>" if _saved(r.get("save")) else "")
+            + f" · {r.get('llm_s')}s</li>"
             for r in c.get("rejudge", []))
         op = e(a.get("type", "")) + (f" ({e(str(a.get('x')))},{e(str(a.get('y')))})" if "x" in a else "") + \
             (f" <code>{e(str(a.get('text', '')))}</code>" if a.get("type") == "input" else "") + \

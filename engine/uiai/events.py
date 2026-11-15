@@ -68,6 +68,8 @@ def describe(ev: dict) -> str:
         line = f"[uiai] {kind}: {where} / {ev.get('section', '')} / 「{ev.get('text', '')}」: {ev.get('reason', '')}"
         if ev.get("read"):
             line += f"（読み取った文字: {ev['read']}）"
+        if ev.get("unsaved"):
+            line += f"（値が決まらない変数: {'、'.join(ev['unsaved'])}）"
         if ev.get("not_run"):
             line += f"（残り {ev['not_run']} ステップは未実行）"
         return line

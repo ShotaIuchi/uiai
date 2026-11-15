@@ -54,7 +54,7 @@ Judging `then`:
   O/0, l/1/I, the number of spaces and punctuation. Put the exact text you read in "read". If the text is
   truncated (…), masked, cut off or otherwise not fully readable, pass=false and say so. Never guess.
 - [strict] `do`: the target's label must match the quoted text exactly.
-"""
+{save}"""
 
 
 STRICT_RULE = """- [strict] assertion: exact character-by-character match. Distinguish full-width/half-width characters, ー/-/−,
@@ -73,18 +73,48 @@ Reply with ONLY one JSON object, no prose, no code fences:
 """ + STRICT_RULE + "\n"
 
 
-def judge_system_prompt(desc: str, iw: int, ih: int) -> str:
-    return JUDGE_SYSTEM.format(desc=desc, iw=iw, ih=ih)
+# Only in scenarios that read values from the screen (`save`): the prompt of the others stays as it was.
+SAVE_RULE = """- [save NAME: WHAT] on a `then`: when it passes, also read WHAT on the current screen and give it in that
+  verdict as "save": {"NAME": "<the exact text>"}, one entry per NAME. Read it character by character as for
+  [strict] (full-width/half-width, ー/-/−, O/0, l/1/I, spaces, punctuation): later steps use it as it is.
+  If it is truncated (…), masked, cut off, not on the screen or not fully readable, pass=false and say so.
+  Never guess.
+"""
+
+JUDGE_SAVE_RULE = """- [save NAME: WHAT] after the assertion: when it passes, also read WHAT on the screenshot and add
+  "save": {"NAME": "<the exact text>"} to the reply, one entry per NAME. Read it as for [strict]. If it is truncated
+  (…), masked, cut off, not on the screenshot or not fully readable, pass=false and say so. Never guess.
+"""
 
 
-def build_judge_message(then: str, strict: bool, after_do: str | None) -> str:
+def judge_system_prompt(desc: str, iw: int, ih: int, save: bool = False) -> str:
+    return JUDGE_SYSTEM.format(desc=desc, iw=iw, ih=ih) + (JUDGE_SAVE_RULE if save else "")
+
+
+def then_line(text: str, strict: bool = False, save: dict[str, str] | None = None) -> str:
+    """A `then` as the AI is given it: with [strict] and [save NAME: WHAT; ...] after it."""
+    line = text + (" [strict]" if strict else "")
+    if save:
+        line += " [save " + "; ".join(f"{n}: {w}" for n, w in save.items()) + "]"
+    return line
+
+
+TAGS_RE = re.compile(r"(?: \[(?:strict|save [^\]]*)\])+$")
+
+
+def strip_tags(line: str) -> str:
+    """The `then` text of a line made by then_line (the AI may echo it with its tags)."""
+    return TAGS_RE.sub("", line)
+
+
+def build_judge_message(then: str, strict: bool, after_do: str | None, save: dict[str, str] | None = None) -> str:
     return "\n".join([f"step just carried out: {after_do or '(none)'}",
-                      "assertion: " + then + (" [strict]" if strict else ""),
+                      "assertion: " + then_line(then, strict, save),
                       "screen: (see the screenshot)"])
 
 
 def parse_judge(text: str) -> dict | None:
-    """{"pass": bool, "reason": str, "read": str|None} from a re-judge reply, or None."""
+    """{"pass": bool, "reason": str, "read": str|None, "save": dict|None} from a re-judge reply, or None."""
     start = text.find("{")
     dec = json.JSONDecoder()
     while start >= 0:
@@ -94,7 +124,8 @@ def parse_judge(text: str) -> dict | None:
             obj = None
         if isinstance(obj, dict) and "pass" in obj:
             return {"pass": obj.get("pass") in (True, "true", "True"), "reason": str(obj.get("reason") or ""),
-                    "read": obj.get("read") or None}
+                    "read": obj.get("read") or None,
+                    "save": obj["save"] if isinstance(obj.get("save"), dict) else None}
         start = text.find("{", start + 1)
     return None
 
@@ -111,7 +142,7 @@ OPTIONAL_RULE = """- [optional] `do`: the scenario goes on even if it fails (e.g
 
 
 def system_prompt(desc: str, iw: int, ih: int, allow: list[str], secrets: list[str] | None = None,
-                  optional: bool = False) -> str:
+                  optional: bool = False, save: bool = False) -> str:
     allow_s = json.dumps(allow, ensure_ascii=False) if allow else "(none)"
     secrets_s = ""
     if secrets:  # only when the scenario has secret variables (an example here gets copied literally)
@@ -119,7 +150,7 @@ def system_prompt(desc: str, iw: int, ih: int, allow: list[str], secrets: list[s
         secrets_s = (f"- Secret placeholders: {names}. When a `do` asks to type one, put the placeholder itself in\n"
                      f"  \"text\" exactly as written; the runner substitutes the real value.\n")
     return SYSTEM.format(desc=desc, iw=iw, ih=ih, allow=allow_s, secrets=secrets_s,
-                         optional=OPTIONAL_RULE if optional else "")
+                         optional=OPTIONAL_RULE if optional else "", save=SAVE_RULE if save else "")
 
 
 @dataclass
@@ -130,7 +161,7 @@ class Ask:
     do_optional: bool = False
     step_no: int = 0
     step_total: int = 0
-    thens: list[tuple[str, bool]] | None = None   # (text, strict)
+    thens: list[tuple] | None = None   # (text, strict) or (text, strict, {variable: what to read})
     attempt: int = 0
     recheck: bool = False
     feedback: str = ""          # result of the previous action
@@ -148,7 +179,7 @@ def build_message(a: Ask) -> str:
         parts.append(f"previous action: {a.feedback}")
     if a.recheck:
         parts.append("(re-check: a `then` failed on the previous screen; this is a fresh screen)")
-    thens = [t + (" [strict]" if s else "") for t, s in (a.thens or [])]
+    thens = [then_line(*t) for t in (a.thens or [])]
     parts.append("then to judge now: " + json.dumps(thens, ensure_ascii=False))
     parts.append("screen: (see the screenshot)")
     return "\n".join(parts)

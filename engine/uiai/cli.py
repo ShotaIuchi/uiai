@@ -192,6 +192,7 @@ def cmd_run(a: argparse.Namespace) -> int:
             _out(f"✗ {f}: {reason}")
             errored = True
             continue
+        _ignored_vars(sc, overrides)
         values, missing = resolve_variables(sc, overrides)
         if missing:
             reason = f"変数 {missing} の値がない（--var、環境変数、または対話入力が必要）"
@@ -440,6 +441,13 @@ def _untargeted(sections: list[str], platform: str) -> str:
             "（`include` に `on` で実行するデバイスを書くか、--platform で別のプラットフォームを選ぶ）")
 
 
+def _ignored_vars(sc, overrides: dict[str, str]) -> None:
+    """--var for a variable read from the screen (`save`): the value read wins, so say that it is not used."""
+    ignored = sorted(set(overrides) & sc.saved_names)
+    if ignored:
+        _out(f"! {sc.name}: --var の {', '.join(ignored)} は画面から読み取る変数（save）なので、渡した値は使わない")
+
+
 def _dry_run(files: list[Path], overrides: dict[str, str], a: argparse.Namespace) -> int:
     """Report what `run` would do (platforms, missing variables) without touching devices or the AI."""
     from .platform import PlatformError, probe, resolve
@@ -454,6 +462,7 @@ def _dry_run(files: list[Path], overrides: dict[str, str], a: argparse.Namespace
             _out(f"✗ {f}: シナリオの形式エラー: " + "; ".join(str(i) for i in e.issues if i.level == "error"))
             ok = False
             continue
+        _ignored_vars(sc, overrides)
         _, missing = resolve_variables(sc, overrides, interactive=False)
         if available is None:
             available = probe(a.serial, a.udid)
@@ -480,7 +489,8 @@ def _dry_run(files: list[Path], overrides: dict[str, str], a: argparse.Namespace
             continue
         sides = sorted(sc.on_platforms - set(platforms))
         on = f"（`on` で {', '.join(sides)} にも切り替える）" if sides else ""
-        _out(f"OK {f}（{sc.name}）: {', '.join(platforms)} で実行できる{on}")
+        saved = f"（画面から読み取る変数: {', '.join(sorted(sc.saved_names))}）" if sc.saved_names else ""
+        _out(f"OK {f}（{sc.name}）: {', '.join(platforms)} で実行できる{on}{saved}")
     return 0 if ok else 2
 
 

@@ -179,7 +179,9 @@ class ScenarioRunner:
         out: dict[str, str] = {}
         for n in it.save:
             val = got.get(n)
-            val = "" if val is None or isinstance(val, (bool, dict, list)) else str(val).strip()
+            if val is not None and not isinstance(val, str):
+                return {}, f"`save` の {n} の値を AI が文字として返さなかった（{val!r}）"
+            val = (val or "").strip(" \t\r\n")  # a full-width space is text on the screen
             if not val:
                 return {}, f"`save` の {n} の値を AI が返さなかった"
             if val.endswith(("…", "...")):
@@ -206,7 +208,8 @@ class ScenarioRunner:
         if not undecided:
             return
         uses = set(it.uses) & self.saved_names
-        if uses & {n for t in undecided for n in t.item.save} or (it.kind == "do" and uses - set(self.values)):
+        stops = it.kind == "do" and not it.optional and uses - set(self.values)
+        if uses & {n for t in undecided for n in t.item.save} or stops:
             self.judge_only(pending)
             if self.res.stop_all:
                 raise StopAll()
@@ -341,7 +344,8 @@ class ScenarioRunner:
     def ask(self, a: Ask, obs, kind: str, step_index: int | None) -> tuple[dict, dict]:
         self.check_time()
         msg = build_message(a)
-        if self.notice:
+        if self.notice and a.do is not None:
+            # a judge-only call is about the steps before (the other app or device): the `do` it is for gets it
             msg, self.notice = self.notice + msg, ""
         if self.carry_history:
             msg = self.history_text() + msg
@@ -570,7 +574,11 @@ class ScenarioRunner:
                     thens=[self.then_spec(t) for t in undecided],
                     recheck=any(t.started for t in undecided))
             res, rec = self.ask(a, obs, "judge", None)
-            if self.judge(undecided, res, rec):
+            act = res["action"] or {}
+            # also when every `then` is decided: what finishes the last `do` (e.g. the OK of a confirmation it
+            # opened) runs here, as it would in the next `do`'s call - the next `do` would find it in its way
+            if self.judge(undecided, res, rec) or (
+                    res["purpose"] in ("verify", "interrupt") and act.get("type") in EXECUTABLE):
                 self.recheck_action(res, rec, self.steps[undecided[0].item.index])
             self.log_call(rec)
 
@@ -675,34 +683,26 @@ class ScenarioRunner:
         for n, t in enumerate(undecided, 1):
             self.finalize(t, "fail", f"判定できなかった（{reason}）", not_run=not_run if n == len(undecided) else 0)
 
-    def fail_do(self, it: Item, reason: str, rest: list[Item], pending: list[ThenState]) -> None:
+    def fail_do(self, it: Item, reason: str, rest: list[Item], pending: list[ThenState], ran: bool = True) -> None:
+        """ran=False: it could not be run (a value read from the screen is missing): it stays not run, and the
+        notification says so, with the steps left unrun (the failed `then` did not tell that the scenario stops)."""
         step = self.steps[it.index]
-        step.status, step.reason = "fail", reason
+        step.reason = reason
+        if ran:
+            step.status = "fail"
         self.fail_pending(pending, reason)  # the `do` failure below reports the steps left unrun
         img = self.res.calls[step.calls[-1] - 1]["image"] if step.calls else None
         self.ev("fail", section=it.section, step=it.index + 1, kind="do", text=step.text, reason=reason,
-                image=str(self.out / img) if img else None, not_run=len(rest))
-        self.print(self.redact.text(f"  ✗ do 失敗 [{it.section}] 「{step.text}」: {reason}"
+                image=str(self.out / img) if img else None, not_run=len(rest), **({} if ran else {"unrun": True}))
+        self.print(self.redact.text(f"  {'✗ do 失敗' if ran else '⏹ do 未実行'} [{it.section}] 「{step.text}」: {reason}"
                                     + (f"（残り {len(rest)} ステップは未実行）" if rest else "")))
         self.res.stop_all = self.cfg.on_failure == "stop_all"
 
-    def not_run(self, it: Item, why: str, section_rest: list[Item]) -> bool:
-        """`it` cannot run for want of a value read from the screen (see missing). A `then` is left unjudged and an
-        optional `do` skipped, and the scenario goes on; another `do` stops it as a failed `do` does
-        (on_failure), without a second notification: the failed `then` was one. True: stop the scenario."""
+    def pass_over(self, it: Item, why: str) -> None:
+        """A `then` that cannot be judged for want of a value read from the screen (see missing): not run."""
         step = self.steps[it.index]
         step.reason = why
-        if it.kind == "then":
-            self.print(self.redact.text(f"  ⏹ then 未実行 [{it.section}] 「{step.text}」: {why}"))
-            return False
-        if it.optional:
-            self.skip_do(it, why)
-            return False
-        to_end = self.cfg.on_failure != "next_section"
-        rest = [x for x in self.items if x.index > it.index] if to_end else section_rest
-        self.print(self.redact.text(f"  ⏹ do 未実行 [{it.section}] 「{step.text}」: {why}"
-                                    + (f"（残り {len(rest)} ステップは未実行）" if rest else "")))
-        return to_end
+        self.print(self.redact.text(f"  ⏹ then 未実行 [{it.section}] 「{step.text}」: {why}"))
 
     def skip_do(self, it: Item, reason: str) -> None:
         """An optional `do` failed: record it as skipped and go on. Its `then`s are judged as usual."""
@@ -761,31 +761,28 @@ class ScenarioRunner:
                         break
                     finally:
                         pending = [t for t in pending if t.final is None]
+                    # a value read from the screen by an earlier `then` that it needs is missing (that one failed)
                     why = self.missing(it)
-                    if why:
-                        if self.not_run(it, why, sec.items[k + 1:]):
-                            stop = True
-                            break
-                        if it.kind == "then" or it.optional:
-                            continue
-                        break  # on_failure: next_section
                     # with the values known now (those read from the screen by earlier `then`s)
                     self.steps[it.index].text = self.text(it)
                     if it.kind == "then":
+                        if why:
+                            self.pass_over(it, why)
+                            continue
                         self.drv.wait_after_action(it.wait)
                         pending.append(ThenState(it, self.steps[it.index].text))
                         continue
-                    try:
-                        self.before_do(si, pending)
-                        ok, reason = self.run_do(it, pending)
-                    except StopScenario as e:
-                        ok, reason, stop_now = False, str(e), True
-                    except StopAll:
-                        self.print("  ■ on_failure: stop_all — 以降は実行しない")
-                        stop = True
-                        break
-                    else:
-                        stop_now = False
+                    ok, reason, stop_now = False, why, False
+                    if not why:  # otherwise it is not run: skipped if optional, else as a failed `do`
+                        try:
+                            self.before_do(si, pending)
+                            ok, reason = self.run_do(it, pending)
+                        except StopScenario as e:
+                            ok, reason, stop_now = False, str(e), True
+                        except StopAll:
+                            self.print("  ■ on_failure: stop_all — 以降は実行しない")
+                            stop = True
+                            break
                     pending = [t for t in pending if t.final is None]
                     if not ok and it.optional and not stop_now:  # the scenario's time limit still stops it
                         self.skip_do(it, reason)
@@ -797,7 +794,7 @@ class ScenarioRunner:
                             stop = True
                         else:
                             rest = sec.items[k + 1:]
-                        self.fail_do(it, reason, rest, pending)
+                        self.fail_do(it, reason, rest, pending, ran=not why)
                         pending = []
                         break
                     self.steps[it.index].status = "pass"

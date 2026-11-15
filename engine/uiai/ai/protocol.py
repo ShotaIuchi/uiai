@@ -74,16 +74,17 @@ Reply with ONLY one JSON object, no prose, no code fences:
 
 
 # Only in scenarios that read values from the screen (`save`): the prompt of the others stays as it was.
-SAVE_RULE = """- [save NAME: WHAT] on a `then`: when it passes, also read WHAT on the current screen and give it in that
-  verdict as "save": {"NAME": "<the exact text>"}, one entry per NAME. Read it character by character as for
-  [strict] (full-width/half-width, ー/-/−, O/0, l/1/I, spaces, punctuation): later steps use it as it is.
-  If it is truncated (…), masked, cut off, not on the screen or not fully readable, pass=false and say so.
-  Never guess.
+SAVE_RULE = """- [save {"NAME": "WHAT", ...}] on a `then`: when it passes, also read each WHAT on the current screen and
+  give it in that verdict as "save": {"NAME": "<the exact text, as a JSON string>"}, one entry per NAME. Read it
+  character by character as for [strict] (full-width/half-width, ー/-/−, O/0, l/1/I, spaces, punctuation): later
+  steps use it as it is. If it is truncated (…), masked, cut off, not on the screen or not fully readable,
+  pass=false and say so. Never guess.
 """
 
-JUDGE_SAVE_RULE = """- [save NAME: WHAT] after the assertion: when it passes, also read WHAT on the screenshot and add
-  "save": {"NAME": "<the exact text>"} to the reply, one entry per NAME. Read it as for [strict]. If it is truncated
-  (…), masked, cut off, not on the screenshot or not fully readable, pass=false and say so. Never guess.
+JUDGE_SAVE_RULE = """- [save {"NAME": "WHAT", ...}] after the assertion: when it passes, also read each WHAT on the
+  screenshot and add "save": {"NAME": "<the exact text, as a JSON string>"} to the reply, one entry per NAME. Read
+  it as for [strict]. If it is truncated (…), masked, cut off, not on the screenshot or not fully readable,
+  pass=false and say so. Never guess.
 """
 
 
@@ -92,19 +93,21 @@ def judge_system_prompt(desc: str, iw: int, ih: int, save: bool = False) -> str:
 
 
 def then_line(text: str, strict: bool = False, save: dict[str, str] | None = None) -> str:
-    """A `then` as the AI is given it: with [strict] and [save NAME: WHAT; ...] after it."""
+    """A `then` as the AI is given it: with [strict] and [save {"NAME": "WHAT", ...}] after it (JSON, so that what
+    to read may hold any character)."""
     line = text + (" [strict]" if strict else "")
     if save:
-        line += " [save " + "; ".join(f"{n}: {w}" for n, w in save.items()) + "]"
+        line += " [save " + json.dumps(save, ensure_ascii=False) + "]"
     return line
 
 
-TAGS_RE = re.compile(r"(?: \[(?:strict|save [^\]]*)\])+$")
+# [save ...] comes last; greedy, as what to read may hold "]"
+TAGS_RE = re.compile(r"(?: \[strict\])?(?: \[save \{.*\}\])?$", re.S)
 
 
 def strip_tags(line: str) -> str:
     """The `then` text of a line made by then_line (the AI may echo it with its tags)."""
-    return TAGS_RE.sub("", line)
+    return TAGS_RE.sub("", line, count=1)
 
 
 def build_judge_message(then: str, strict: bool, after_do: str | None, save: dict[str, str] | None = None) -> str:

@@ -31,6 +31,7 @@ steps:
 """
 
 DETAIL = "the detail is shown"
+SENT = then_line(DETAIL, False, {"title": "the title"})  # as the AI is given it
 
 
 def write(tmp_path, text, name="s.yaml"):
@@ -160,18 +161,21 @@ def test_an_included_save_clashes_with_a_value_of_the_including_scenario(tmp_pat
 def test_the_save_rule_is_only_in_scenarios_that_save():
     plain = system_prompt("a screen", 10, 10, [])
     assert "[save" not in plain and "{save}" not in plain
-    assert "[save NAME: WHAT]" in system_prompt("a screen", 10, 10, [], save=True)
+    assert '[save {"NAME": "WHAT", ...}]' in system_prompt("a screen", 10, 10, [], save=True)
     assert "[save" not in judge_system_prompt("a screen", 10, 10)
-    assert "[save NAME: WHAT]" in judge_system_prompt("a screen", 10, 10, save=True)
+    assert '[save {"NAME": "WHAT", ...}]' in judge_system_prompt("a screen", 10, 10, save=True)
 
 
 def test_a_then_carries_what_to_read_and_the_ai_may_echo_it():
     line = then_line("X", True, {"a": "the title", "b": "the price"})
-    assert line == "X [strict] [save a: the title; b: the price]"
+    assert line == 'X [strict] [save {"a": "the title", "b": "the price"}]'
     assert strip_tags(line) == "X" and strip_tags("X [strict]") == "X" and strip_tags("X") == "X"
+    # what to read may hold any character: JSON keeps the entries apart, and the tag still comes off
+    odd = then_line("X", False, {"a": "the [ID] field; b: c", "b": "d"})
+    assert odd == 'X [save {"a": "the [ID] field; b: c", "b": "d"}]' and strip_tags(odd) == "X"
     msg = build_message(Ask(section="s", do=None, thens=[("X", False, {"a": "the title"}), ("Y", False)]))
-    assert '["X [save a: the title]", "Y"]' in msg
-    assert "assertion: X [save a: the title]" in build_judge_message("X", False, "do", {"a": "the title"})
+    assert json.dumps(['X [save {"a": "the title"}]', "Y"], ensure_ascii=False) in msg
+    assert 'assertion: X [save {"a": "the title"}]' in build_judge_message("X", False, "do", {"a": "the title"})
     assert parse_judge('{"pass": true, "reason": "r", "save": {"a": "v"}}')["save"] == {"a": "v"}
     assert parse_judge('{"pass": true, "reason": "r"}')["save"] is None
 
@@ -184,8 +188,8 @@ def test_the_value_read_is_used_by_the_next_do_which_waits_for_it(make_run):
         if n == 1:
             return reply({"type": "launch"})
         if n == 2:  # judged before the `do` that needs the value, on the screen the last `do` left
-            assert "only judge" in msg and '"the detail is shown [save title: the title]"' in msg
-            return reply({"type": "none"}, verify=[v(DETAIL + " [save title: the title]", save={"title": " Foo Bar "})])
+            assert "only judge" in msg and json.dumps(SENT, ensure_ascii=False) in msg
+            return reply({"type": "none"}, verify=[v(SENT, save={"title": " Foo Bar "})])  # echoed with its tags
         if n == 3:
             assert "do: search for Foo Bar" in msg
             return reply()
@@ -209,7 +213,7 @@ def test_the_system_prompt_has_the_rule_and_other_scenarios_do_not(make_run):
                                          [v("results for T are shown")] if n == 4 else []))
 
     make_run(SAVE, None, factory=factory)
-    assert "[save NAME: WHAT]" in systems[0]
+    assert '[save {"NAME": "WHAT", ...}]' in systems[0]
 
 
 def test_without_a_step_that_needs_it_soon_the_then_is_judged_with_the_next_do_as_usual(make_run):
@@ -253,8 +257,10 @@ def test_without_a_usable_value_the_then_fails_and_the_do_that_needs_it_is_not_r
     assert res.steps[2].reason == "変数 (title) の値がない（値を読み取る then「the detail is shown」が不合格）"
     assert res.steps[2].text == "search for (title)"  # never had a value
     fails = [e for e in events if e["type"] == "fail"]
-    assert len(fails) == 1 and fails[0]["unsaved"] == ["title"]  # notified once: the failed `then`
-    assert "（値が決まらない変数: title）" in describe(fails[0])
+    assert fails[0]["unsaved"] == ["title"] and "（値が決まらない変数: title）" in describe(fails[0])
+    # the `do` left unrun is notified too: the failed `then` alone does not tell that the scenario stops
+    assert len(fails) == 2 and fails[1]["kind"] == "do" and fails[1]["unrun"] is True and fails[1]["not_run"] == 1
+    assert describe(fails[1]).startswith("[uiai] do 未実行: ") and "（残り 1 ステップは未実行）" in describe(fails[1])
     assert any("値は決まらない" in n for n in res.steps[1].notes)
 
 
@@ -323,7 +329,8 @@ def test_without_the_value_thens_and_optional_dos_are_passed_over_and_next_secti
     assert [s.status for s in res.steps if s.section == "B"] == ["pass", "not_run", "skip", "pass", "pass"]
     assert [s.status for s in res.steps if s.section == "C"] == ["not_run", "not_run"]  # next_section
     assert [s.status for s in res.steps if s.section == "D"] == ["pass", "pass"]
-    assert [e["type"] for e in events if e["type"] in ("fail", "skip")] == ["fail", "skip"]
+    assert [(e["type"], e.get("unrun")) for e in events if e["type"] in ("fail", "skip")] == [
+        ("fail", None), ("skip", None), ("fail", True)]  # C's `do`: the rest of its section is not run
 
 
 def test_a_second_opinion_that_passes_must_read_the_value_too(make_run):
@@ -347,7 +354,7 @@ def test_a_second_opinion_that_passes_must_read_the_value_too(make_run):
 
     res, *_ = make_run(text, script, rejudge=rejudge)
     assert res.status == "pass_warn" and res.steps[1].saved == {"title": "Bar"}
-    assert "assertion: the detail is shown [save title: the title]" in seen[0]
+    assert "assertion: " + SENT in seen[0]
     assert res.calls[1]["rejudge"][0]["save"] == {"title": "Bar"}
 
     res, *_ = make_run(text, lambda m, n: reply({"type": "launch"}) if n == 1 else
@@ -428,3 +435,115 @@ def test_var_for_a_saved_variable_is_not_used_and_dry_run_says_so(tmp_path, caps
     assert code == 0
     assert "--var の title は画面から読み取る変数（save）なので、渡した値は使わない" in out
     assert "web で実行できる（画面から読み取る変数: title）" in out
+
+
+# ---------------------------------------------------------------- review fixes
+
+
+def test_an_app_change_is_told_with_the_do_not_with_the_judging_before_it(make_run, tmp_path):
+    write(tmp_path, 'name: other\napp: "http://other"\nvariables:\n  code:\nsteps:\n  - id: s\n    actions:\n'
+                    '      - do: "type (code)"\n      - then: "typed"\n', "parts/other.yaml")
+    text = scenario('  - id: pre\n    actions:\n      - do: "open"\n      - then: "opened"\n'
+                    '        save: {code: "the code"}\n  - include: parts/other.yaml\n')
+
+    def script(msg, n):
+        if n == 2:  # judged early, on the screen of the app before: nothing about the other app yet
+            assert "only judge" in msg and "The app under test is now" not in msg
+            return reply({"type": "none"}, verify=[v("opened", save={"code": "C1"})])
+        if n == 3:
+            assert "The app under test is now http://other" in msg and "do: type C1" in msg
+            return reply({"type": "launch"})
+        if n == 4:
+            return reply({"type": "none"}, verify=[v("typed")])
+        return reply({"type": "launch"})
+
+    res, _, ai, _ = make_run(text, script)
+    assert res.status == "pass" and len(ai.msgs) == 4
+
+
+def test_what_finishes_the_last_do_runs_when_the_then_is_judged_early(make_run):
+    def script(msg, n):
+        if n == 1:
+            return reply({"type": "launch"})
+        if n == 2:  # the value is visible behind the confirmation the last `do` opened: its OK still runs
+            return reply({"type": "tap", "x": 5, "y": 6}, purpose="verify", done=False,
+                         verify=[v(DETAIL, save={"title": "T"})])
+        if n == 3:
+            return reply()
+        return reply({"type": "none"}, verify=[v("results for T are shown")])
+
+    res, drv, ai, _ = make_run(SAVE, script)
+    assert res.status == "pass"
+    assert [a["type"] for a in drv.acts] == ["launch", "tap", "tap"] and drv.acts[1]["x"] == 5
+    assert "判定のための操作: tap" in res.steps[1].notes
+
+
+def test_an_included_declaration_with_a_value_is_not_replaced_by_a_save(tmp_path):
+    write(tmp_path, 'name: login\napp: "http://x"\nvariables:\n  pw: {env: PW, secret: true}\nsteps:\n'
+                    '  - id: s\n    actions:\n      - do: "type (pw)"\n      - then: "in"\n', "parts/login.yaml")
+    p = write(tmp_path, scenario('  - id: A\n    actions:\n      - do: "open"\n      - then: "x"\n'
+                                 '        save: {pw: "the hint"}\n  - include: parts/login.yaml\n'))
+    assert [c for c, _ in errors(p)] == ["E036"]  # not a silent swap of the secret for the hint
+    # a save that E035 rejects does not take the declaration away either
+    p = write(tmp_path, scenario('  - id: A\n    actions:\n      - do: "open"\n      - then: "x"\n'
+                                 '        save: {pw: ""}\n  - include: parts/login.yaml\n'))
+    assert [c for c, _ in errors(p)] == ["E035"]
+
+
+def test_the_then_is_found_when_the_ai_echoes_a_tag_holding_a_bracket(make_run):
+    text = SAVE.replace('title: "the title"', 'title: "the [ID] field"')
+
+    def script(msg, n):
+        if n == 2:  # one verdict too many: the `then` is found by its text
+            return reply({"type": "none"}, verify=[v("something else"),
+                                                   v(then_line(DETAIL, False, {"title": "the [ID] field"}),
+                                                     save={"title": "T"})])
+        if n == 3:
+            return reply()
+        if n == 4:
+            return reply({"type": "none"}, verify=[v("results for T are shown")])
+        return reply({"type": "launch"})
+
+    res, *_ = make_run(text, script)
+    assert res.steps[1].status == "pass" and res.steps[1].saved == {"title": "T"}
+
+
+@pytest.mark.parametrize("value,saved,reason", [
+    (1.10, None, "`save` の title の値を AI が文字として返さなかった（1.1）"),  # its text is lost
+    (4827, None, "`save` の title の値を AI が文字として返さなかった（4827）"),
+    ("　Foo ", "　Foo", ""),  # a full-width space is on the screen: only ASCII blanks are trimmed
+])
+def test_the_value_must_come_as_text(make_run, value, saved, reason):
+    text = SAVE.replace("save:", "timeout: 0\n        save:")
+
+    def script(msg, n):
+        if n == 2:
+            return reply({"type": "none"}, verify=[v(DETAIL, save={"title": value})])
+        if n == 3:
+            return reply()
+        return reply({"type": "none" if n > 1 else "launch"}, verify=[v(f"results for {saved} are shown")])
+
+    res, *_ = make_run(text, script)
+    if saved is None:
+        assert res.steps[1].status == "fail" and res.steps[1].reason == reason
+    else:
+        assert res.steps[1].saved == {"title": saved}
+
+
+def test_an_optional_do_without_its_value_costs_no_extra_call(make_run):
+    text = scenario('  - id: A\n    actions:\n      - do: "open"\n      - then: "detail"\n        timeout: 0\n'
+                    '        save: {title: "the title"}\n      - do: "tap"\n      - then: "other"\n'
+                    '      - do: "search for (title)"\n        optional: true\n      - do: "next"\n')
+
+    def script(msg, n):
+        assert "only judge" not in msg  # "other" is judged with "next", as usual
+        if n == 2:
+            return reply(verify=[v("detail", ok=False)])
+        if n == 3:
+            assert "do: next" in msg and '"other"' in msg
+            return reply(verify=[v("other")])
+        return reply({"type": "launch"})
+
+    res, _, ai, _ = make_run(text, script)
+    assert len(ai.msgs) == 3
+    assert [s.status for s in res.steps] == ["pass", "fail", "pass", "pass", "skip", "pass"]

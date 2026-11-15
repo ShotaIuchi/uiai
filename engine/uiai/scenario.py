@@ -298,19 +298,45 @@ def _read_scenario(path: Path, parents: tuple[Path, ...] = ()) -> _Read:
     if merged_app is not None:
         data["app"] = merged_app
     if variables is not None:
-        # an included scenario declares a variable (with no value, say) that is read from the screen (`save`)
-        # here: the value read is used (the including scenario wins, as for its own variables)
+        # an included scenario declares a variable without a value that is read from the screen (`save`) here: the
+        # value read is used (the including scenario wins, as for its own variables). One with a value, `env` or
+        # `secret` is kept: E036 then reports the clash, rather than the value being replaced unseen.
         for n in from_includes & _saved_names(steps):
-            del variables[n]
+            var = parse_variable(n, variables[n])
+            if var.is_placeholder and not var.env and not var.secret:
+                del variables[n]
         data["variables"] = variables
     return _Read(data, dups, metas, own_app, issues)
 
 
+def _saves(steps: Any) -> list[tuple[int, int, dict]]:
+    """(section index, action index, action) of each action in `steps` that has a `save`."""
+    return [(i, j, a) for i, s in enumerate(steps if isinstance(steps, list) else []) if isinstance(s, dict)
+            for j, a in enumerate(s.get("actions") if isinstance(s.get("actions"), list) else [])
+            if isinstance(a, dict) and "save" in a]
+
+
+def _read_save(a: dict) -> tuple[list[str], list[str]]:
+    """(the variables the `save` of action `a` validly gives, the problems with it) - E035."""
+    save = a["save"]
+    if "then" not in a:
+        return [], ["`save` は `then` にだけ書ける"]
+    if not isinstance(save, dict) or not save:
+        return [], ["`save` は「変数名: 画面で読み取る内容」のマッピング"]
+    names, problems = [], []
+    for n, what in save.items():
+        if not isinstance(n, str) or not NAME_RE.match(n):
+            problems.append(f"`save` の変数名 `{n}` が不正（英字か _ で始まり、英数字と _ のみ）")
+        elif not isinstance(what, str) or not what.strip():
+            problems.append(f"`save` の `{n}` に、画面で読み取る内容を書く")
+        else:
+            names.append(n)
+    return names, problems
+
+
 def _saved_names(steps: Any) -> set[str]:
-    """The variable names the `save`s of the `then`s in `steps` give (as written, valid or not)."""
-    return {str(n) for s in (steps if isinstance(steps, list) else []) if isinstance(s, dict)
-            for a in (s.get("actions") if isinstance(s.get("actions"), list) else [])
-            if isinstance(a, dict) and "then" in a and isinstance(a.get("save"), dict) for n in a["save"]}
+    """The variables the `save`s in `steps` validly give."""
+    return {n for _, _, a in _saves(steps) for n in _read_save(a)[0]}
 
 
 def _as_secret(spec: Any) -> Any:
@@ -588,25 +614,13 @@ def check_data(data: Any, duplicates: list[tuple[Any, int]] | None = None, origi
 def _check_saves(steps: list, origins: list[_Step], variables: dict, err) -> dict[str, list[str]]:
     """E035/E036: the `save`s of the `then`s. Returns {variable: where it is saved} of the valid ones."""
     saves: dict[str, list[str]] = {}
-    for i, sec in enumerate(steps):
-        acts = sec.get("actions") if isinstance(sec, dict) else None
-        for j, a in enumerate(acts if isinstance(acts, list) else []):
-            if not isinstance(a, dict) or "save" not in a:
-                continue
-            aw = f"{origins[i].where}（{sec.get('id', '')}） actions[{j}]"
-            save = a["save"]
-            if "then" not in a:
-                err("E035", "`save` は `then` にだけ書ける", aw)
-            elif not isinstance(save, dict) or not save:
-                err("E035", "`save` は「変数名: 画面で読み取る内容」のマッピング", aw)
-            else:
-                for n, what in save.items():
-                    if not isinstance(n, str) or not NAME_RE.match(n):
-                        err("E035", f"`save` の変数名 `{n}` が不正（英字か _ で始まり、英数字と _ のみ）", aw)
-                    elif not isinstance(what, str) or not what.strip():
-                        err("E035", f"`save` の `{n}` に、画面で読み取る内容を書く", aw)
-                    else:
-                        saves.setdefault(n, []).append(aw)
+    for i, j, a in _saves(steps):
+        aw = f"{origins[i].where}（{steps[i].get('id', '')}） actions[{j}]"
+        names, problems = _read_save(a)
+        for msg in problems:
+            err("E035", msg, aw)
+        for n in names:
+            saves.setdefault(n, []).append(aw)
     for n, places in saves.items():
         if n in variables:
             err("E036", f"変数 `{n}` が `variables` と `save` の両方にある（画面から読み取るなら `variables` から消す）",
@@ -620,7 +634,10 @@ def _check_save_order(steps: list, origins: list[_Step], saved: set[str], err) -
     """E037: a variable read from the screen (`save`) used before, in run order, the `then` that reads it."""
     done: set[str] = set()
     reported: set[tuple[str, str]] = set()
-    for kind, a, aw in _run_order(steps, origins):
+    for run, kind, src, j in _run_order(steps):
+        a = steps[src]["actions"][j]
+        at = f"{origins[run].where}（{steps[run].get('id', '')}）"
+        aw = f"{at} actions[{j}]" if src == run else f"{at} replay → {steps[src].get('id', '')} actions[{j}]"
         save = a.get("save") if kind == "then" and isinstance(a.get("save"), dict) else {}
         for t in (a.get(kind), *save.values()):  # its own text and what it reads come before what it saves
             for n in (m.group(1) for m in VAR_RE.finditer(t if isinstance(t, str) else "")):
@@ -630,40 +647,43 @@ def _check_save_order(steps: list, origins: list[_Step], saved: set[str], err) -
         done |= {n for n in save if n in saved}
 
 
-def _run_order(steps: list, origins: list[_Step]) -> list[tuple[str, dict, str]]:
-    """(kind, action, where) of each `do`/`then` in run order, with the `do`s that `replay`s run again (as
-    _expand does). Broken entries and `replay`s are passed over: other rules report them."""
-    ids = [str(s.get("id")) for s in steps if isinstance(s, dict)]
-    by_id = {str(s.get("id")): (i, s) for i, s in enumerate(steps) if isinstance(s, dict)}
+def _replay_ids(sec: Any, ids: list[str]) -> list[str]:
+    """The ids of the sections the `replay` of `sec` runs again (from..to), or [] if it has none or a broken one."""
+    r = sec.get("replay") if isinstance(sec, dict) else None
+    if not isinstance(r, dict):
+        return []
+    f, t = str(r.get("from")), str(r.get("to"))
+    if f not in ids or t not in ids or ids.index(f) > ids.index(t):
+        return []
+    return ids[ids.index(f): ids.index(t) + 1]
 
-    def acts(s: dict) -> list[tuple[int, dict]]:
-        a = s.get("actions")
+
+def _run_order(steps: list) -> list[tuple[int, str, int, int]]:
+    """Each `do`/`then` in run order, with the `do`s that `replay`s run again (nested ones first): (index of the
+    section that runs it, kind, index of the section it is written in, its index in that section's actions).
+    Broken entries and `replay`s, and replay cycles, are passed over: other rules report them."""
+    ids = [str(s.get("id")) for s in steps if isinstance(s, dict)]
+    pos = {str(s.get("id")): i for i, s in enumerate(steps) if isinstance(s, dict)}
+
+    def acts(i: int) -> list[tuple[int, dict]]:
+        a = steps[i].get("actions")
         return [(j, x) for j, x in enumerate(a) if isinstance(x, dict)] if isinstance(a, list) else []
 
-    def replayed(s: dict, at: str, stack: tuple[str, ...]) -> list[tuple[str, dict, str]]:
-        r = s.get("replay")
-        if not isinstance(r, dict):
-            return []
-        f, t = str(r.get("from")), str(r.get("to"))
-        if f not in ids or t not in ids or ids.index(f) > ids.index(t):
-            return []
-        out: list[tuple[str, dict, str]] = []
-        for sid in ids[ids.index(f): ids.index(t) + 1]:
+    def replayed(run: int, i: int, stack: tuple[str, ...]) -> list[tuple[int, str, int, int]]:
+        out: list[tuple[int, str, int, int]] = []
+        for sid in _replay_ids(steps[i], ids):
             if sid in stack:  # a cycle (E023)
                 return out
-            _, src = by_id[sid]
-            out += replayed(src, at, stack + (sid,))
-            out += [("do", x, f"{at} replay → {sid} actions[{j}]") for j, x in acts(src) if "do" in x]
+            src = pos[sid]
+            out += replayed(run, src, stack + (sid,))
+            out += [(run, "do", src, j) for j, x in acts(src) if "do" in x]
         return out
 
-    order: list[tuple[str, dict, str]] = []
+    order: list[tuple[int, str, int, int]] = []
     for i, s in enumerate(steps):
-        if not isinstance(s, dict):
-            continue
-        at = f"{origins[i].where}（{s.get('id', '')}）"
-        order += replayed(s, at, (str(s.get("id")),))
-        order += [("do" if "do" in x else "then", x, f"{at} actions[{j}]") for j, x in acts(s)
-                  if "do" in x or "then" in x]
+        if isinstance(s, dict):
+            order += replayed(i, i, (str(s.get("id")),))
+            order += [(i, "do" if "do" in x else "then", i, j) for j, x in acts(i) if "do" in x or "then" in x]
     return order
 
 
@@ -690,13 +710,7 @@ def _find_replay_cycle(steps: list) -> list[str] | None:
     by_id = {str(s.get("id")): s for s in steps if isinstance(s, dict)}
 
     def refs(sid: str) -> list[str]:
-        r = by_id.get(sid, {}).get("replay")
-        if not isinstance(r, dict):
-            return []
-        f, t = str(r.get("from")), str(r.get("to"))
-        if f not in ids or t not in ids or ids.index(f) > ids.index(t):
-            return []
-        return ids[ids.index(f): ids.index(t) + 1]
+        return _replay_ids(by_id.get(sid), ids)
 
     def visit(sid: str, stack: list[str]) -> list[str] | None:
         if sid in stack:
@@ -768,9 +782,6 @@ def _parse_config(cfg: dict) -> Config:
 
 
 def _expand(steps: list[dict], cfg: Config, origins: list[_Step]) -> list[Section]:
-    ids = [str(s["id"]) for s in steps]
-    by_id = {str(s["id"]): s for s in steps}
-
     def make(a: dict, kind: str, section: str, origin: str) -> Item:
         strict = a.get("strict", cfg.strict)
         it = Item(kind, a[kind], section, origin, strict=bool(strict), wait=float(a.get("wait") or 0),
@@ -781,32 +792,13 @@ def _expand(steps: list[dict], cfg: Config, origins: list[_Step]) -> list[Sectio
             it.observe = float(a.get("observe", DEFAULT_OBSERVE))
         return it
 
-    def replay_dos(sec: dict, section: str, stack: tuple[str, ...]) -> list[Item]:
-        r = sec.get("replay")
-        if not isinstance(r, dict):
-            return []
-        f, t = ids.index(str(r["from"])), ids.index(str(r["to"]))
-        out: list[Item] = []
-        for sid in ids[f: t + 1]:
-            if sid in stack:
-                raise ValueError(f"replay cycle at {sid}")
-            src = by_id[sid]
-            out += replay_dos(src, section, stack + (sid,))
-            out += [make(a, "do", section, sid) for a in src.get("actions") or [] if "do" in a]
-        return out
-
-    sections: list[Section] = []
-    n = 0
-    for sec, origin in zip(steps, origins):
-        sid = str(sec["id"])
-        items = replay_dos(sec, sid, (sid,))
-        items += [make(a, "do" if "do" in a else "then", sid, sid) for a in sec.get("actions") or []]
-        for it in items:
-            it.index = n
-            n += 1
-        sections.append(Section(sid, items, on=sec.get("on") if sec.get("on") in PLATFORMS else None,
-                                targets=dict(origin.targets)))
-    return sections
+    items: list[list[Item]] = [[] for _ in steps]
+    for n, (run, kind, src, j) in enumerate(_run_order(steps)):
+        it = make(steps[src]["actions"][j], kind, str(steps[run]["id"]), str(steps[src]["id"]))
+        it.index = n
+        items[run].append(it)
+    return [Section(str(sec["id"]), its, on=sec.get("on") if sec.get("on") in PLATFORMS else None,
+                    targets=dict(origin.targets)) for sec, its, origin in zip(steps, items, origins)]
 
 
 def load(path: Path) -> Scenario:

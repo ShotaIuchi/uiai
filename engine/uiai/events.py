@@ -64,7 +64,7 @@ def describe(ev: dict) -> str:
     if ev["type"] == "error":
         return f"[uiai] 実行エラー: {where}: {ev.get('reason', '')}"
     if ev["type"] == "fail":
-        kind = "then 不合格" if ev.get("kind") == "then" else "do 失敗"
+        kind = "then 不合格" if ev.get("kind") == "then" else "do 未実行" if ev.get("unrun") else "do 失敗"
         line = f"[uiai] {kind}: {where} / {ev.get('section', '')} / 「{ev.get('text', '')}」: {ev.get('reason', '')}"
         if ev.get("read"):
             line += f"（読み取った文字: {ev['read']}）"

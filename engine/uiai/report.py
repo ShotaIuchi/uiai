@@ -54,9 +54,9 @@ def _on(res: ScenarioResult, platform: str | None) -> str:
     return f" @ {platform}" if platform and platform != res.platform else ""
 
 
-def _saved(d: dict | None) -> str:
-    """Values read from the screen (`save`): `name = 「value」`, …"""
-    return "、".join(f"{n} = 「{v}」" for n, v in (d or {}).items()) if isinstance(d, dict) else ""
+def _saved(d: object) -> str:
+    """Values read from the screen (`save`): `name = 「value」`, … ("" for none)."""
+    return "、".join(f"{n} = 「{v}」" for n, v in d.items()) if isinstance(d, dict) else ""
 
 
 def _report_md(res: ScenarioResult) -> str:
@@ -100,6 +100,11 @@ td,th{border:1px solid var(--border);padding:6px 8px;vertical-align:top;text-ali
 
 def _report_html(res: ScenarioResult) -> str:
     e = html.escape
+
+    def saved(d: object) -> str:
+        text = _saved(d)
+        return f" 保存: <code>{e(text)}</code>" if text else ""
+
     meta = "".join(f"<li>{e(m[2:])}</li>" for m in _meta_lines(res))
     rows = []
     for s in res.steps:
@@ -124,13 +129,13 @@ def _report_html(res: ScenarioResult) -> str:
         verdicts = "".join(
             f"<li class={'pass' if v.get('pass') else 'fail'}>{'✅' if v.get('pass') else '❌'} {e(str(v.get('then', '')))}"
             f" — {e(str(v.get('reason', '')))}" + (f" <code>{e(str(v['read']))}</code>" if v.get("read") else "")
-            + (f" 保存: <code>{e(_saved(v['save']))}</code>" if _saved(v.get("save")) else "") + "</li>"
+            + saved(v.get("save")) + "</li>"
             for v in c["verify"])
         verdicts += "".join(
             f"<li class={'pass' if r.get('pass') else 'fail'}>↻ 再判定（{e(str(r.get('model')))}）"
             f"{'✅' if r.get('pass') else '❌'} {e(str(r.get('then', '')))} — {e(str(r.get('reason', '')))}"
             + (f" <code>{e(str(r['read']))}</code>" if r.get("read") else "")
-            + (f" 保存: <code>{e(_saved(r['save']))}</code>" if _saved(r.get("save")) else "")
+            + saved(r.get("save"))
             + f" · {r.get('llm_s')}s</li>"
             for r in c.get("rejudge", []))
         op = e(a.get("type", "")) + (f" ({e(str(a.get('x')))},{e(str(a.get('y')))})" if "x" in a else "") + \

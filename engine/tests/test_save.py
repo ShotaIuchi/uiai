@@ -465,17 +465,22 @@ def test_what_finishes_the_last_do_runs_when_the_then_is_judged_early(make_run):
     def script(msg, n):
         if n == 1:
             return reply({"type": "launch"})
-        if n == 2:  # the value is visible behind the confirmation the last `do` opened: its OK still runs
+        if n == 2:  # the value is visible behind the confirmation the last `do` opened: it is asked again for it
             return reply({"type": "tap", "x": 5, "y": 6}, purpose="verify", done=False,
                          verify=[v(DETAIL, save={"title": "T"})])
         if n == 3:
+            assert "this `do` was reported done" in msg and "do: open the list" in msg and DETAIL not in msg
+            return reply({"type": "tap", "x": 5, "y": 6})
+        if n == 4:
+            assert "do: search for T" in msg
             return reply()
         return reply({"type": "none"}, verify=[v("results for T are shown")])
 
     res, drv, ai, _ = make_run(SAVE, script)
     assert res.status == "pass"
     assert [a["type"] for a in drv.acts] == ["launch", "tap", "tap"] and drv.acts[1]["x"] == 5
-    assert "判定のための操作: tap" in res.steps[1].notes
+    assert [c["kind"] for c in res.calls] == ["do", "judge", "finish", "do", "judge"]
+    assert "then の判定の前に、then を見せずに聞き直して続けた操作: tap" in res.steps[0].notes
 
 
 def test_an_included_declaration_with_a_value_is_not_replaced_by_a_save(tmp_path):

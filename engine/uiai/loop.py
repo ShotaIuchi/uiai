@@ -34,6 +34,13 @@ BACK_WORDS = re.compile(r"戻|back", re.I)
 # With continuously animated screens this would never end, so after this many skips per `do` it acts anyway.
 MAX_STALE_SKIPS = 2
 STALE_LABEL = "未実行（AI の判断後に画面が変わったため撮り直す）"
+# What finishes the previous `do` (e.g. the OK of the confirmation of the outcome it asked for) is never run where
+# `then`s are shown: the AI pressed what made a `then` pass (the OK of a confirmation the `do` said to leave open,
+# and the error the `then` expected came after it; a reported run), hiding the bug. That `do` is asked again
+# instead, in a conversation of its own that has not seen the `then`s (finish): these are the actions it may take
+# there, and the calls a `do` gets for that.
+FINISH_ACTIONS = ("tap", "input", "key", "scroll", "wait")
+MAX_FINISH_CALLS = 3
 # Conversations (design doc 10): every screenshot stays in the claude -p conversation (~1.6k tokens each on
 # Web). Measured in phase 4, the input size barely changes the response time (0.44 ms per 1k tokens; the
 # output length dominates), but it costs tokens and would hit the context window (200k) after ~120 calls.
@@ -164,6 +171,8 @@ class ScenarioRunner:
         self.session_section = -1    # section of the last `do` run in it
         self.carry_history = False   # prepend earlier steps to the next message
         self.closing: list[threading.Thread] = []
+        self.finish_calls: dict[int, int] = {}  # per `do`: the calls that asked it again (see finish)
+        self.finished: set[int] = set()         # `do`s that, asked again, needed nothing more
 
     # ------------------------------------------------------------------ helpers
     def text(self, it: Item) -> str:
@@ -173,7 +182,7 @@ class ScenarioRunner:
         """A pending `then` for Ask: (text, strict, {variable: what to read})."""
         return t.text, t.item.strict, {n: render(w, self.values, self.secrets) for n, w in t.item.save.items()}
 
-    def prev_do(self, it: Item) -> str | None:
+    def prev_do_item(self, it: Item) -> Item | None:
         """The `do` whose result the `then` `it` checks: the last one before it, unless a reset
         (on_failure: next_section) or another device comes between."""
         before = [x for x in self.items if x.kind == "do" and x.index < it.index]
@@ -183,7 +192,11 @@ class ScenarioRunner:
         if self.steps[d.index].platform != self.steps[it.index].platform or (
                 d.section != it.section and self.cfg.on_failure == "next_section"):
             return None
-        return self.steps[d.index].text
+        return d
+
+    def prev_do(self, it: Item) -> str | None:
+        d = self.prev_do_item(it)
+        return None if d is None else self.steps[d.index].text
 
     def read_saves(self, it: Item, got) -> tuple[dict[str, str], str]:
         """The values a passing verdict read for the `save` of `it`, or why they cannot be used."""
@@ -353,22 +366,27 @@ class ScenarioRunner:
                 return obs
             time.sleep(1.0)
 
-    def ask(self, a: Ask, obs, kind: str, step_index: int | None) -> tuple[dict, dict]:
+    def ask(self, a: Ask, obs, kind: str, step_index: int | None, own: tuple[object, int] | None = None
+            ) -> tuple[dict, dict]:
+        """own: (conversation, its number) to ask in instead of the current one (finish)."""
         self.check_time()
         msg = build_message(a)
-        if self.notice and a.do is not None:
-            # a judge-only call is about the steps before (the other app or device): the `do` it is for gets it
-            msg, self.notice = self.notice + msg, ""
-        if self.carry_history:
-            msg = self.history_text() + msg
-            self.carry_history = False
-        self.session_calls += 1
-        reply, meta = self.ai.ask(msg, obs.jpeg)
-        self.session_tokens = meta["in_tokens"]
+        if own is None:
+            if self.notice and a.do is not None:
+                # a judge-only call is about the steps before (the other app or device): the `do` it is for gets it
+                msg, self.notice = self.notice + msg, ""
+            if self.carry_history:
+                msg = self.history_text() + msg
+                self.carry_history = False
+            self.session_calls += 1
+        ai = self.ai if own is None else own[0]
+        reply, meta = ai.ask(msg, obs.jpeg)
+        if own is None:
+            self.session_tokens = meta["in_tokens"]
         res = parse_reply(reply)
         if res is None:
-            reply2, meta2 = self.ai.ask("Your previous reply was not a valid JSON object. "
-                                        "Reply again with ONLY the JSON object for the same screen.")
+            reply2, meta2 = ai.ask("Your previous reply was not a valid JSON object. "
+                                   "Reply again with ONLY the JSON object for the same screen.")
             res = parse_reply(reply2)
             meta = {k: meta[k] + meta2[k] for k in ("wall_s", "api_s", "out_tokens")} | {"in_tokens": meta2["in_tokens"]}
             if res is None:
@@ -385,7 +403,8 @@ class ScenarioRunner:
             "error_shown": res["error_shown"], "done": res["done"], "act_result": "",
             "image": img, "iw": obs.width, "ih": obs.height, "screen_changed": obs.changed,
             "obs_s": obs.seconds, "obs_polls": obs.polls, "llm_s": meta["wall_s"], "api_s": meta["api_s"],
-            "in_tokens": meta["in_tokens"], "out_tokens": meta["out_tokens"], "session": self.session_id,
+            "in_tokens": meta["in_tokens"], "out_tokens": meta["out_tokens"],
+            "session": self.session_id if own is None else own[1],
             "platform": self.cur, "note": "",
         }
         self.res.calls.append(rec)
@@ -413,11 +432,13 @@ class ScenarioRunner:
         A passed negative `then` is only observed (and so confirmed) once the screen is final:
         not while another `then` is being re-checked or the previous `do` still needs a finishing
         action (e.g. a confirmation dialog) - otherwise an error shown after that action is missed.
+        Once that `do`, asked again, needed nothing more (finish), the screen is final.
         """
         now = time.time()
         verdicts = res["verify"]
         act = res["action"] or {}
-        finishing = res["purpose"] == "verify" and act.get("type") in EXECUTABLE
+        finishing = res["purpose"] == "verify" and act.get("type") in EXECUTABLE and (
+            act["type"] == "scroll" or self.can_finish(undecided))
         retrying = False
         passed_absence: list[ThenState] = []
         for i, t in enumerate(undecided):
@@ -532,9 +553,11 @@ class ScenarioRunner:
                                         + (f"（残り {not_run} ステップは未実行）" if not_run else "")))
 
     def recheck_action(self, res: dict, rec: dict, step: StepResult | None) -> None:
-        """While a `then` is being re-checked: run only verify/interrupt actions, otherwise wait."""
+        """While a `then` is being re-checked: run only a scroll to judge it or an interrupt, otherwise wait.
+        What finishes the previous `do` is never run here (see held)."""
         act = res["action"] or {}
-        if res["purpose"] in ("verify", "interrupt") and act.get("type") in EXECUTABLE:
+        if act.get("type") in EXECUTABLE and (
+                res["purpose"] == "interrupt" or (res["purpose"] == "verify" and act["type"] == "scroll")):
             if res["purpose"] == "interrupt" and not self.interrupt_allowed(res, step):
                 time.sleep(1.0)
                 return
@@ -588,12 +611,101 @@ class ScenarioRunner:
             feedback = ""
             res, rec = self.ask(a, obs, "judge", None)
             act = res["action"] or {}
-            # also when every `then` is decided: what finishes the last `do` (e.g. the OK of the confirmation of
-            # the outcome it asked for) runs here - the next `do` would find it in its way
-            if self.judge(undecided, res, rec) or (
-                    res["purpose"] in ("verify", "interrupt") and act.get("type") in EXECUTABLE):
+            retry = self.judge(undecided, res, rec)
+            if self.held(res):
+                # also when every `then` is decided: the next `do` would find what the last one left in its way
+                feedback, went_on = self.hold(act, undecided, rec)
+                if retry and not went_on:
+                    time.sleep(1.0)
+                continue
+            if retry or (res["purpose"] == "interrupt" and act.get("type") in EXECUTABLE):
                 self.recheck_action(res, rec, self.steps[undecided[0].item.index])
             self.log_call(rec)
+
+    @staticmethod
+    def held(res: dict) -> bool:
+        """An action given to judge the `then`s that is not a scroll: one that would finish the previous `do`.
+        It is not run (see FINISH_ACTIONS)."""
+        act = res["action"] or {}
+        return res["purpose"] == "verify" and act.get("type") in EXECUTABLE and act["type"] != "scroll"
+
+    def can_finish(self, undecided: list[ThenState]) -> bool:
+        """Whether the `do` that the `then`s check may still be asked again (finish)."""
+        d = self.prev_do_item(undecided[0].item) if undecided else None
+        return (d is not None and self.steps[d.index].status == "pass" and d.index not in self.finished
+                and self.finish_calls.get(d.index, 0) < MAX_FINISH_CALLS)
+
+    def hold(self, act: dict, undecided: list[ThenState], rec: dict, do: str = "") -> tuple[str, bool]:
+        """A held action: not run. The previous `do` is asked again instead, if it may still be (finish).
+        do: the `do` of the call, which waits until the `then`s are judged in calls of their own.
+        Returns what the next judging call is told, and whether the previous `do` went on."""
+        again = self.can_finish(undecided)
+        d = self.prev_do_item(undecided[0].item)
+        done = d is not None and d.index in self.finished
+        what = "前の do を then なしで聞き直す" if again else "前の do は聞き直し済み" if done else "前の do は聞き直さない"
+        rec["note"] = ((rec["note"] + "。" if rec["note"] else "") + "判定のための操作は実行せず、" + what
+                       + ("。then は判定だけの呼び出しで判定する" if do else ""))
+        self.log_call(rec)
+        head = f"{act['type']} was NOT executed" + (
+            f": the `do` \"{do}\" waits until these `then`s are judged (its actions are \"purpose\": \"step\")"
+            if do else "")
+        ran = self.finish(undecided) if again else []
+        if ran:
+            return (f"{head}. The previous `do` was asked again on its own and went on: {', '.join(ran)} (this is "
+                    "the screen after it)"), True
+        if d is not None and d.index in self.finished:
+            return (f"{head}. The previous `do`, asked again on its own, needs nothing more: judge the `then`s on "
+                    "this screen (\"verify\" is only for scrolling now)"), False
+        return f"{head}. \"verify\" is only for scrolling here", False
+
+    def finish(self, undecided: list[ThenState]) -> list[str]:
+        """Ask the `do` that the `then`s check again, on the screen now, in a conversation of its own that has not
+        seen them, and run what it gives for that `do`. Returns the actions it took for it."""
+        d = self.prev_do_item(undecided[0].item)
+        step = self.steps[d.index]
+        self.session_no += 1
+        own = (self.ai_factory(self.system), self.session_no)
+        ran: list[str] = []
+        fb = ""
+        try:
+            while self.can_finish(undecided):
+                self.finish_calls[d.index] = self.finish_calls.get(d.index, 0) + 1
+                obs = self.observe()
+                if obs.black and self.drv.detect_black:
+                    break
+                a = Ask(section=d.section, do=step.text, do_strict=d.strict, do_optional=d.optional,
+                        attempt=len(ran), feedback=fb, again=True)
+                res, rec = self.ask(a, obs, "finish", d.index, own)
+                act = res["action"] or {}
+                t = act.get("type")
+                if res["error_shown"] or not (
+                        (res["purpose"] == "step" and t in FINISH_ACTIONS)
+                        or (res["purpose"] == "interrupt" and t in EXECUTABLE and self.interrupt_allowed(res, step))):
+                    if t not in (None, "none"):
+                        rec["note"] = "前の do の続きとしては実行しない（then の判定へ戻る）"
+                    self.log_call(rec)
+                    self.finished.add(d.index)  # nothing more for it, or nothing it may do here
+                    break
+                result = self.drv.act(self.fill(act), self.app, check_stale=True)
+                if result == STALE:
+                    rec["act_result"] = STALE_LABEL
+                    self.log_call(rec)
+                    fb = f"{t} was NOT executed: the screen changed after the screenshot (look again)"
+                    continue
+                rec["act_result"] = self.redact.text(result)
+                self.log_call(rec)
+                fb = f"{t} -> {rec['act_result']}" + ("" if result == "ok" else " (the action failed)")
+                if res["purpose"] == "step" and t != "wait":
+                    ran.append(t)
+                if result == "ok" and res["done"] and res["purpose"] == "step":
+                    break
+        finally:
+            th = threading.Thread(target=own[0].close, daemon=True)
+            th.start()
+            self.closing.append(th)
+        if ran:
+            step.notes.append(f"then の判定の前に、then を見せずに聞き直して続けた操作: {'、'.join(ran)}")
+        return ran
 
     # ------------------------------------------------------------------ do
     def run_do(self, it: Item, pending: list[ThenState]) -> tuple[bool, str]:
@@ -625,17 +737,13 @@ class ScenarioRunner:
             res, rec = self.ask(a, obs, "do" if not undecided or not any(t.started for t in undecided) else "recheck",
                                 it.index)
             act = res["action"] or {}
-            if undecided and res["purpose"] == "verify" and act.get("type") in EXECUTABLE and act["type"] != "scroll":
-                # An action that finishes the previous `do` changes the screen its `then`s are judged on, and here
-                # the AI may give the current `do`'s own action as one (in a reported run it tapped the next tab, and
-                # the `then` about the tab before failed on the screen that led to). The `then`s are judged in calls
-                # of their own first: without a `do` to act on, an action they return can only finish the previous one.
-                rec["note"] = "判定のための操作は実行せず、then を判定だけの呼び出しで判定する"
-                self.log_call(rec)
-                self.judge_only(pending, feedback=(
-                    f"{act['type']} was NOT executed: the `do` \"{text}\" waits until these `then`s are judged, and "
-                    "its actions are \"purpose\": \"step\". Return a \"verify\" action only to finish the previous "
-                    "`do` or to scroll."))
+            if undecided and self.held(res):
+                # Not run (see FINISH_ACTIONS), and here the AI may also give the current `do`'s own action as one
+                # that finishes the previous `do` (in a reported run it tapped the next tab, and the `then` about the
+                # tab before failed on the screen that led to). The previous `do` is asked again on its own, and the
+                # `then`s are judged in calls of their own, before the current `do` is asked for again.
+                fb, _ = self.hold(act, undecided, rec, do=text)
+                self.judge_only(pending, feedback=fb)
                 if self.res.stop_all:
                     raise StopAll()
                 continue  # ask for the `do` again, on the screen now

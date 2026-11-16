@@ -72,30 +72,107 @@ def test_then_fails_after_timeout_and_the_scenario_continues(make_run, clock):
     assert sum(1 for c in res.calls if "X is shown" in c["thens"]) == 6
 
 
-def test_verify_action_during_recheck_is_executed(make_run):
+AGAIN = "this `do` was reported done"  # in the message that asks a `do` again (finish)
+
+
+def test_what_finishes_the_previous_do_runs_only_when_that_do_asked_again_on_its_own_gives_it(make_run):
+    """"open the app" left the confirmation of what it asked for open: the OK given to judge the `then` is not run;
+    the `do` is asked again in a conversation of its own that has not seen the `then`, and runs what it gives."""
     def script(msg, n):
         if n == 1:
             return reply({"type": "launch"})
-        if n == 2:  # given in the call of "tap B": the `then`s are judged in a call of their own first
+        if n == 2:  # in the call of "tap B"
             return reply({"type": "tap", "x": 5, "y": 5}, verify=[v("X is shown", False)], purpose="verify", done=False)
         if n == 3:
-            assert "only judge" in msg and "previous action: tap was NOT executed" in msg and '"tap B"' in msg
-            assert "previous do (the `then`s check its result): open the app" in msg
-            return reply({"type": "tap", "x": 5, "y": 5}, verify=[v("X is shown", False)], purpose="verify", done=False)
+            assert AGAIN in msg and "do: open the app" in msg and "then to judge now: []" in msg
+            assert "X is shown" not in msg and "tap B" not in msg and "previous do" not in msg
+            return reply({"type": "tap", "x": 5, "y": 5})
         if n == 4:
-            assert "only judge" in msg and "re-check" in msg and "NOT executed" not in msg
+            assert "only judge" in msg and "tap was NOT executed" in msg and '"tap B"' in msg
+            assert "went on: tap" in msg and "previous do (the `then`s check its result): open the app" in msg
             return reply({"type": "none"}, verify=[v("X is shown")])
         if n == 5:
             assert "then to judge now: []" in msg and "previous do" not in msg
             return reply()
         return reply({"type": "none"}, verify=[v("Y is shown")])
 
-    res, drv, _, _ = make_run(BASIC, script)
+    res, drv, ai, _ = make_run(BASIC, script)
     assert [(a["type"], a.get("x")) for a in drv.acts] == [("launch", None), ("tap", 5), ("tap", 1)]
-    assert [c["kind"] for c in res.calls] == ["do", "do", "judge", "judge", "do", "judge"]
-    assert "判定のための操作: tap" in res.steps[1].notes
-    assert res.calls[1]["note"].startswith("判定のための操作は実行せず")
+    assert [c["kind"] for c in res.calls] == ["do", "do", "finish", "judge", "do", "judge"]
+    assert res.calls[2]["step"] == 1 and res.calls[2]["session"] != res.calls[1]["session"]
+    assert res.calls[3]["session"] == res.calls[1]["session"]  # the judging goes on in the conversation it was in
+    assert res.calls[1]["note"].startswith("判定のための操作は実行せず、前の do を then なしで聞き直す")
+    assert "then の判定の前に、then を見せずに聞き直して続けた操作: tap" in res.steps[0].notes
     assert res.status == "pass"
+
+
+def test_a_then_is_not_made_to_pass_by_what_the_previous_do_did_not_ask_for(make_run):
+    """The `do` said to tap one button and leave its confirmation open; the AI gave the OK of the confirmation to
+    judge the `then` (the error it expected came only after that OK: a bug), also after it was not run. Asked again
+    on its own, the `do` needs nothing more: the OK is never pressed and the `then` fails."""
+    ok = {"type": "tap", "x": 9, "y": 9}
+
+    def script(msg, n):
+        if n == 1:
+            return reply({"type": "launch"})
+        if AGAIN in msg:
+            return reply({"type": "none"})
+        if "X is shown" in msg:
+            if n > 3:
+                assert "needs nothing more" in msg or "re-check" in msg
+            return reply(ok, verify=[v("X is shown", False)], purpose="verify", done=False)
+        if "only judge" in msg:
+            return reply({"type": "none"}, verify=[v("Y is shown")])
+        return reply()
+
+    res, drv, ai, _ = make_run(BASIC, script)
+    assert [a.get("x") for a in drv.acts] == [None, 1]  # never the OK
+    assert [c["kind"] for c in res.calls].count("finish") == 1
+    assert res.steps[1].status == "fail" and res.steps[3].status == "pass"
+    assert any(c["note"].startswith("判定のための操作は実行せず、前の do は聞き直し済み") for c in res.calls)
+    assert not res.steps[0].notes
+
+
+def test_asked_again_a_do_may_not_go_back_or_restart_the_app(make_run):
+    def script(msg, n):
+        if n == 1:
+            return reply({"type": "launch"})
+        if n == 2:
+            return reply({"type": "tap", "x": 5, "y": 5}, verify=[v("X is shown", False)], purpose="verify", done=False)
+        if n == 3:
+            assert AGAIN in msg
+            return reply({"type": "back"})
+        if n == 4:
+            assert "needs nothing more" in msg
+            return reply({"type": "none"}, verify=[v("X is shown")])
+        if n == 5:
+            return reply()
+        return reply({"type": "none"}, verify=[v("Y is shown")])
+
+    res, drv, _, _ = make_run(BASIC, script)
+    assert [a["type"] for a in drv.acts] == ["launch", "tap"]
+    assert res.calls[2]["note"] == "前の do の続きとしては実行しない（then の判定へ戻る）"
+    assert res.status == "pass"
+
+
+def test_a_do_is_asked_again_a_few_times_at_most(make_run):
+    def script(msg, n):
+        if n == 1:
+            return reply({"type": "launch"})
+        if AGAIN in msg:
+            return reply({"type": "tap", "x": 6, "y": 6}, done=False)  # never done
+        if "X is shown" in msg:
+            return reply({"type": "tap", "x": 5, "y": 5}, verify=[v("X is shown", False)], purpose="verify", done=False)
+        if "only judge" in msg:
+            return reply({"type": "none"}, verify=[v("Y is shown")])
+        return reply()
+
+    res, drv, ai, _ = make_run(BASIC, script)
+    kinds = [c["kind"] for c in res.calls]
+    assert kinds.count("finish") == 3 and kinds[2:5] == ["finish"] * 3  # in one go, then never again
+    assert "(continuing this `do`, action 2)" in ai.msgs[3] and "previous action: tap -> ok" in ai.msgs[3]
+    assert [a.get("x") for a in drv.acts] == [None, 6, 6, 6, 1]
+    assert res.steps[1].status == "fail"
 
 
 TABS = """
@@ -113,7 +190,8 @@ steps:
 
 def test_the_do_given_as_a_verify_action_runs_only_after_the_thens_are_judged(make_run):
     """The AI gave the tap on tab B (the `do`) as one that finishes the previous `do`: the negative `then` was
-    observed after it and failed. It is now judged on the screen tab A left, and tab B is tapped as a step."""
+    observed after it and failed. "tap tab A", asked again on its own, needs nothing more; the `then` is judged on
+    the screen tab A left, and tab B is tapped as a step."""
     def script(msg, n):
         if n == 1:
             return reply({"type": "tap", "x": 1, "y": 1})
@@ -121,17 +199,20 @@ def test_the_do_given_as_a_verify_action_runs_only_after_the_thens_are_judged(ma
             return reply({"type": "tap", "x": 2, "y": 2}, verify=[v("field X is not shown", absence=True)],
                          purpose="verify")
         if n == 3:
-            assert "only judge" in msg
-            return reply({"type": "none"}, verify=[v("field X is not shown", absence=True)])
+            assert AGAIN in msg and "do: tap tab A" in msg
+            return reply({"type": "none"})
         if n == 4:
+            assert "only judge" in msg and "needs nothing more" in msg
+            return reply({"type": "none"}, verify=[v("field X is not shown", absence=True)])
+        if n == 5:
             assert "do: tap tab B" in msg and "then to judge now: []" in msg
             return reply({"type": "tap", "x": 2, "y": 2})
         return reply({"type": "none"}, verify=[v("field X is shown")])
 
     res, drv, ai, _ = make_run(TABS, script)
     assert [a["x"] for a in drv.acts] == [1, 2]
-    assert drv.watched == [2.0]  # observed on the screen tab A left (in call 3, before tab B is tapped)
-    assert [c["kind"] for c in res.calls] == ["do", "do", "judge", "do", "judge"]
+    assert drv.watched == [2.0]  # observed on the screen tab A left (in call 4, before tab B is tapped)
+    assert [c["kind"] for c in res.calls] == ["do", "do", "finish", "judge", "do", "judge"]
     assert res.status == "pass" and not any(s.warnings for s in res.steps)
 
 
@@ -152,9 +233,9 @@ def test_a_scroll_to_judge_a_then_still_runs_in_the_call_of_the_do(make_run):
     assert res.status == "pass"
 
 
-def test_the_judge_only_call_still_finishes_the_previous_do(make_run):
-    """"save" left its confirmation open: the OK the AI gives in the call of the next `do` runs in the call that
-    judges the `then`s, and a negative `then` is observed only after it (an error shown after saving is caught)."""
+def test_what_the_previous_do_still_needed_runs_before_a_negative_then_is_observed(make_run):
+    """"save" left its confirmation open: asked again, it taps the OK, and a negative `then` is observed only after
+    that (an error shown after saving is caught)."""
     y = """
 name: t
 app: "http://x"
@@ -174,10 +255,12 @@ steps:
     def script(msg, n):
         if n == 1:
             return reply()
-        if n in (2, 3):  # the call of "open home", then the one that judges on its own
-            assert n == 2 or "only judge" in msg
+        if n == 2:  # the call of "open home"
             return reply(finish, verify=[v("saved message is shown", False), v("no error is shown", absence=True)],
                          purpose="verify", done=False)
+        if n == 3:
+            assert AGAIN in msg and "do: save" in msg
+            return reply(finish)
         if n == 4:
             return reply({"type": "none"}, verify=[v("saved message is shown"), v("no error is shown", absence=True)])
         if "only judge" in msg and "no error" in msg:
@@ -236,6 +319,39 @@ steps:
         reply({"type": "launch"}) if n == 1 else reply(verify=[v("X is shown"), v("Y is shown")])))
     assert "previous do (the `then`s check its result): open" in ai.msgs[1] and '"Y is shown"' in ai.msgs[1]
     assert res.status == "pass" and len(ai.msgs) == 2
+
+
+def test_without_a_previous_do_an_action_to_finish_it_is_not_run(make_run):
+    y = """
+name: t
+app: "http://x"
+config:
+  on_failure: next_section
+steps:
+  - id: A
+    actions:
+      - do: "open"
+  - id: B
+    actions:
+      - then: "Y is shown"
+      - do: "tap"
+"""
+
+    def script(msg, n):
+        if n == 1:
+            return reply({"type": "launch"})
+        if '"Y is shown"' in msg:  # on the screen the reset left: no `do` to finish, nothing to ask again
+            assert AGAIN not in msg
+            return reply({"type": "tap", "x": 9, "y": 9}, verify=[v("Y is shown", False)], purpose="verify",
+                         done=False)
+        return reply({"type": "none"})
+
+    res, drv, ai, _ = make_run(y, script)
+    assert [a.get("x") for a in drv.acts] == [None]
+    assert "finish" not in [c["kind"] for c in res.calls]
+    assert res.calls[1]["note"] == "判定のための操作は実行せず、前の do は聞き直さない。then は判定だけの呼び出しで判定する"
+    assert '"verify" is only for scrolling here' in ai.msgs[2]
+    assert res.steps[1].status == "fail"
 
 
 def test_do_failure_stops_the_scenario_and_marks_the_rest_not_run(make_run):
@@ -409,11 +525,14 @@ steps:
     def script(msg, n):
         if n == 1:
             return reply()
-        if n == 2:  # dialog still open: finish it
+        if n == 2:  # dialog still open: finish it (the `do` is asked again for that)
             return reply({"type": "tap", "x": 7, "y": 7},
                          verify=[v("saved message is shown", False), v("no error is shown", True, absence=True)],
                          purpose="verify", done=False)
         if n == 3:
+            assert AGAIN in msg and "do: save" in msg
+            return reply({"type": "tap", "x": 7, "y": 7})
+        if n == 4:
             return reply({"type": "none"}, verify=[v("saved message is shown"), v("no error is shown", True, absence=True)])
         return reply({"type": "none"}, verify=[v("no error is shown", False, absence=True)])
 
@@ -421,6 +540,7 @@ steps:
     assert [a.get("x") for a in drv.acts] == [1, 7]
     assert drv.watched == [2.0]          # observed only after the dialog was finished
     assert res.steps[1].status == "pass" and res.steps[2].status == "fail"
+    assert "否定形の then の観察は" in res.calls[1]["note"] and "聞き直す" in res.calls[1]["note"]
 
 
 def test_action_on_a_stale_screen_is_skipped_and_reasked(make_run):

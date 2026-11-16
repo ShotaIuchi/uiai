@@ -18,7 +18,7 @@ from typing import Callable
 from .ai import AIError
 from .ai.protocol import (Ask, build_judge_message, build_message, judge_system_prompt, parse_judge, parse_reply,
                           strip_tags, system_prompt)
-from .drivers.base import STALE, Driver, DriverError
+from .drivers.base import STALE, STALE_CHECKED, Driver, DriverError
 from .events import EventLog
 from .redact import Redactor, traceback_to_stderr
 from .scenario import Item, Scenario, fill_secrets, render
@@ -41,6 +41,11 @@ STALE_LABEL = "未実行（AI の判断後に画面が変わったため撮り�
 # there, and the calls a `do` gets for that.
 FINISH_ACTIONS = ("tap", "input", "key", "scroll", "wait")
 MAX_FINISH_CALLS = 3
+# An interrupt closed before anything else is done after the last action of a `do` (reported done) may have taken
+# that action: a dialog that comes up between the screenshot taken just before the action (stale check) and the
+# action itself is in front when it lands. In a reported run the email typed into a login form went to a cookie
+# dialog, the field stayed empty, and the next `do`s went on. That `do` is asked again once the interrupt is closed
+# (covered), the same way (finish), and the `then`s are not judged on the screen with the interrupt.
 # Conversations (design doc 10): every screenshot stays in the claude -p conversation (~1.6k tokens each on
 # Web). Measured in phase 4, the input size barely changes the response time (0.44 ms per 1k tokens; the
 # output length dominates), but it costs tokens and would hit the context window (200k) after ~120 calls.
@@ -173,6 +178,9 @@ class ScenarioRunner:
         self.closing: list[threading.Thread] = []
         self.finish_calls: dict[int, int] = {}  # per `do`: the calls that asked it again (see finish)
         self.finished: set[int] = set()         # `do`s that, asked again, needed nothing more
+        # the `do` (and device) whose last action, aimed at the screen, is the last one done there (see covered)
+        self.unseen: tuple[Item, str | None] | None = None
+        self.item_at = {it.index: it for it in sc.items}
 
     # ------------------------------------------------------------------ helpers
     def text(self, it: Item) -> str:
@@ -407,6 +415,8 @@ class ScenarioRunner:
             "session": self.session_id if own is None else own[1],
             "platform": self.cur, "note": "",
         }
+        if self.unseen is not None and self.unseen[1] == self.cur:
+            rec["after_do"] = self.unseen[0].index + 1  # nothing was done since that `do`'s last action (see covered)
         self.res.calls.append(rec)
         if step_index is not None:
             self.steps[step_index].calls.append(n)
@@ -433,7 +443,12 @@ class ScenarioRunner:
         not while another `then` is being re-checked or the previous `do` still needs a finishing
         action (e.g. a confirmation dialog) - otherwise an error shown after that action is missed.
         Once that `do`, asked again, needed nothing more (finish), the screen is final.
+        Nothing is decided on an interrupt over what the previous `do`'s last action led to (see covered).
         """
+        if self.covered(res, rec) is not None:
+            self.unseen = None  # once: the next calls judge them, whether the interrupt got closed or not
+            rec["note"] = "前の do の最後の操作の直後に割り込み。then は、閉じて前の do を聞き直してから判定する"
+            return True
         now = time.time()
         verdicts = res["verify"]
         act = res["action"] or {}
@@ -561,7 +576,7 @@ class ScenarioRunner:
             if res["purpose"] == "interrupt" and not self.interrupt_allowed(res, step):
                 time.sleep(1.0)
                 return
-            result = self.drv.act(self.fill(act), self.app, check_stale=True)
+            result = self.act(act)
             if result == STALE:
                 rec["act_result"] = STALE_LABEL
                 return
@@ -584,6 +599,14 @@ class ScenarioRunner:
         if step is not None:
             self.warn(step, f"想定外のダイアログを閉じた: {dialog}")
         return True
+
+    def act(self, act: dict, check_stale: bool = True) -> str:
+        """Run an action on the device in use. Once one is done, the last `do` is no longer the one before the
+        screen (see covered)."""
+        result = self.drv.act(self.fill(act), self.app, check_stale=check_stale)
+        if result != STALE and act.get("type") in EXECUTABLE:
+            self.unseen = None
+        return result
 
     def fill(self, act: dict) -> dict:
         """The action for the driver: secret placeholders replaced by the values. An input that holds a secret
@@ -621,6 +644,9 @@ class ScenarioRunner:
             if retry or (res["purpose"] == "interrupt" and act.get("type") in EXECUTABLE):
                 self.recheck_action(res, rec, self.steps[undecided[0].item.index])
             self.log_call(rec)
+            again = self.reask_covered(res, rec)
+            if again:
+                feedback = f"{act.get('type')} -> {rec['act_result']}; {again}"
 
     @staticmethod
     def held(res: dict) -> bool:
@@ -629,11 +655,36 @@ class ScenarioRunner:
         act = res["action"] or {}
         return res["purpose"] == "verify" and act.get("type") in EXECUTABLE and act["type"] != "scroll"
 
-    def can_finish(self, undecided: list[ThenState]) -> bool:
-        """Whether the `do` that the `then`s check may still be asked again (finish)."""
-        d = self.prev_do_item(undecided[0].item) if undecided else None
+    def can_ask_again(self, d: Item | None) -> bool:
+        """Whether the `do` d may still be asked again (finish)."""
         return (d is not None and self.steps[d.index].status == "pass" and d.index not in self.finished
                 and self.finish_calls.get(d.index, 0) < MAX_FINISH_CALLS)
+
+    def can_finish(self, undecided: list[ThenState]) -> bool:
+        """Whether the `do` that the `then`s check may still be asked again (finish)."""
+        return self.can_ask_again(self.prev_do_item(undecided[0].item) if undecided else None)
+
+    def covered(self, res: dict, rec: dict) -> Item | None:
+        """The `do` whose last action may have hit the interrupt that this call closes: nothing was done since that
+        action (see FINISH_ACTIONS). None if there is none, the interrupt is not to be closed (interrupts.mode = fail),
+        or that `do` may not be asked again."""
+        d = self.item_at.get(rec.get("after_do", 0) - 1)
+        act = res["action"] or {}
+        if res["purpose"] != "interrupt" or act.get("type") not in EXECUTABLE or not self.can_ask_again(d):
+            return None
+        if not res["allowed"] and self.cfg.interrupts.mode == "fail":
+            return None
+        return d
+
+    def reask_covered(self, res: dict, rec: dict) -> str:
+        """Once the interrupt of a covered call is closed, ask that `do` again (finish). Returns what the
+        conversation that closed it is told, or "" if nothing was asked."""
+        d = self.covered(res, rec)
+        if d is None or rec["act_result"] != "ok":
+            return ""
+        ran = self.finish(d, covered=True)
+        return ("the previous `do` was asked again on its own, since its last action may have hit that dialog: "
+                + (f"it went on: {', '.join(ran)} (this is the screen after it)" if ran else "it needed nothing more"))
 
     def hold(self, act: dict, undecided: list[ThenState], rec: dict, do: str = "") -> tuple[str, bool]:
         """A held action: not run. The previous `do` is asked again instead, if it may still be (finish).
@@ -649,7 +700,7 @@ class ScenarioRunner:
         head = f"{act['type']} was NOT executed" + (
             f": the `do` \"{do}\" waits until these `then`s are judged (its actions are \"purpose\": \"step\")"
             if do else "")
-        ran = self.finish(undecided) if again else []
+        ran = self.finish(d) if again else []
         if ran:
             return (f"{head}. The previous `do` was asked again on its own and went on: {', '.join(ran)} (this is "
                     "the screen after it)"), True
@@ -658,23 +709,23 @@ class ScenarioRunner:
                     "this screen (\"verify\" is only for scrolling now)"), False
         return f"{head}. \"verify\" is only for scrolling here", False
 
-    def finish(self, undecided: list[ThenState]) -> list[str]:
-        """Ask the `do` that the `then`s check again, on the screen now, in a conversation of its own that has not
-        seen them, and run what it gives for that `do`. Returns the actions it took for it."""
-        d = self.prev_do_item(undecided[0].item)
+    def finish(self, d: Item, covered: bool = False) -> list[str]:
+        """Ask the `do` d (reported done) again, on the screen now, in a conversation of its own that has not seen the
+        `then`s that check it, and run what it gives for it. Returns the actions it took for it.
+        covered: an interrupt that came up right after its last action was closed (see covered)."""
         step = self.steps[d.index]
         self.session_no += 1
         own = (self.ai_factory(self.system), self.session_no)
         ran: list[str] = []
         fb = ""
         try:
-            while self.can_finish(undecided):
+            while self.can_ask_again(d):
                 self.finish_calls[d.index] = self.finish_calls.get(d.index, 0) + 1
                 obs = self.observe()
                 if obs.black and self.drv.detect_black:
                     break
                 a = Ask(section=d.section, do=step.text, do_strict=d.strict, do_optional=d.optional,
-                        attempt=len(ran), feedback=fb, again=True)
+                        attempt=len(ran), feedback=fb, again=True, covered=covered and not ran)
                 res, rec = self.ask(a, obs, "finish", d.index, own)
                 act = res["action"] or {}
                 t = act.get("type")
@@ -682,11 +733,11 @@ class ScenarioRunner:
                         (res["purpose"] == "step" and t in FINISH_ACTIONS)
                         or (res["purpose"] == "interrupt" and t in EXECUTABLE and self.interrupt_allowed(res, step))):
                     if t not in (None, "none"):
-                        rec["note"] = "前の do の続きとしては実行しない（then の判定へ戻る）"
+                        rec["note"] = "前の do の続きとしては実行しない"
                     self.log_call(rec)
                     self.finished.add(d.index)  # nothing more for it, or nothing it may do here
                     break
-                result = self.drv.act(self.fill(act), self.app, check_stale=True)
+                result = self.act(act)
                 if result == STALE:
                     rec["act_result"] = STALE_LABEL
                     self.log_call(rec)
@@ -698,13 +749,16 @@ class ScenarioRunner:
                 if res["purpose"] == "step" and t != "wait":
                     ran.append(t)
                 if result == "ok" and res["done"] and res["purpose"] == "step":
+                    if t in STALE_CHECKED:
+                        self.unseen = (d, self.cur)
                     break
         finally:
             th = threading.Thread(target=own[0].close, daemon=True)
             th.start()
             self.closing.append(th)
         if ran:
-            step.notes.append(f"then の判定の前に、then を見せずに聞き直して続けた操作: {'、'.join(ran)}")
+            when = "直後の割り込みを閉じた後に" if covered else "then の判定の前に、then を見せずに"
+            step.notes.append(f"{when}聞き直して続けた操作: {'、'.join(ran)}")
         return ran
 
     # ------------------------------------------------------------------ do
@@ -750,6 +804,7 @@ class ScenarioRunner:
             if undecided and self.judge(undecided, res, rec):
                 self.recheck_action(res, rec, step)
                 self.log_call(rec)
+                again = self.reask_covered(res, rec)
                 if act.get("type") in EXECUTABLE:
                     # Tell the AI whether its action ran: in phase 4 it took an unexecuted tap for one that
                     # "did not work", tapped again, and finally failed the `do`.
@@ -757,6 +812,7 @@ class ScenarioRunner:
                     feedback = (f"{act.get('type')} -> {rec['act_result']}" if rec["act_result"] else
                                 f"{act.get('type')} was NOT executed: actions for the `do` wait until the `then`s "
                                 "are decided (only purpose verify/interrupt actions run meanwhile)")
+                    feedback += f"; {again}" if again else ""
                 continue
             if self.res.stop_all:
                 self.log_call(rec)
@@ -775,7 +831,7 @@ class ScenarioRunner:
                 self.warn(step, "アプリを起動し直した（`do` は起動を指示していない）")
             if t == "none" and res["purpose"] == "step" and actions == 0:
                 self.warn(step, "操作せずに完了扱い（前提がシナリオの想定と違う可能性）")
-            result = (self.drv.act(self.fill(act), self.app, check_stale=stale_skips < MAX_STALE_SKIPS)
+            result = (self.act(act, check_stale=stale_skips < MAX_STALE_SKIPS)
                       if t not in (None, "none") else "ok")
             if result == STALE:
                 stale_skips += 1
@@ -795,6 +851,9 @@ class ScenarioRunner:
             if result != "ok":
                 feedback += " (the action failed)"
                 continue
+            again = self.reask_covered(res, rec)
+            if again:
+                feedback += f"; {again}"
             if res["done"] and res["purpose"] == "step":
                 if not checked and t not in (None, "none"):
                     # A message such as "already registered" often comes after the last action: the optional
@@ -804,6 +863,8 @@ class ScenarioRunner:
                     limit = max(limit, actions + 2)  # room to close what it caused, and to look again
                     feedback += "; [optional] check the result on this screen before the `do` counts as done"
                     continue
+                if t in STALE_CHECKED:
+                    self.unseen = (it, self.cur)  # see covered
                 break
         if went_back and not BACK_WORDS.search(text):
             self.warn(step, "戻る操作を挟んだ（`do` は戻ることを指示していない。遠回りの可能性）")
@@ -883,6 +944,7 @@ class ScenarioRunner:
                     self.drv.wait_out()  # a `wait` of the last `do` is over before the reset
                     self.drv.reset(self.app, self.cfg)
                     self.section_first_do = True
+                    self.unseen = None
                 for k, it in enumerate(sec.items):
                     try:
                         self.settle(it, pending)

@@ -151,7 +151,7 @@ def test_asked_again_a_do_may_not_go_back_or_restart_the_app(make_run):
 
     res, drv, _, _ = make_run(BASIC, script)
     assert [a["type"] for a in drv.acts] == ["launch", "tap"]
-    assert res.calls[2]["note"] == "前の do の続きとしては実行しない（then の判定へ戻る）"
+    assert res.calls[2]["note"] == "前の do の続きとしては実行しない"
     assert res.status == "pass"
 
 
@@ -352,6 +352,168 @@ steps:
     assert res.calls[1]["note"] == "判定のための操作は実行せず、前の do は聞き直さない。then は判定だけの呼び出しで判定する"
     assert '"verify" is only for scrolling here' in ai.msgs[2]
     assert res.steps[1].status == "fail"
+
+
+LOGIN = """
+name: t
+app: "http://x"
+config: {interrupts: {allow: ["Cookie の同意"]}}
+steps:
+  - id: A
+    actions:
+      - do: "open the app"
+      - do: "type the email"
+      - do: "type the password"
+      - then: "logged in"
+"""
+COOKIE = dict(purpose="interrupt", dialog="Cookie", allowed="Cookie の同意", done=False)
+COVERED = "the action may have hit the dialog"  # in the message that asks a `do` again after an interrupt
+
+
+def test_a_do_whose_last_action_a_dialog_may_have_taken_is_asked_again_once_it_is_closed(make_run):
+    """The cookie dialog came up as the email was typed: the typing went to the dialog (the field stayed empty, and
+    the next `do`s went on). Closed on the next screen, the `do` that typed is asked again on its own and types."""
+    def script(msg, n):
+        if n == 1:
+            return reply({"type": "launch"})
+        if n == 2:
+            return reply({"type": "input", "x": 3, "y": 3, "text": "a@b"})
+        if n == 3:
+            assert "do: type the password" in msg
+            return reply({"type": "tap", "x": 9, "y": 9}, **COOKIE)
+        if n == 4:
+            assert AGAIN in msg and COVERED in msg and "do: type the email" in msg
+            return reply({"type": "input", "x": 3, "y": 3, "text": "a@b"})
+        if n == 5:
+            assert "do: type the password" in msg
+            assert "tap -> ok; the previous `do` was asked again on its own, since its last action may have hit " \
+                   "that dialog: it went on: input (this is the screen after it)" in msg
+            return reply({"type": "input", "x": 4, "y": 4, "text": "pw"})
+        return reply({"type": "none"}, verify=[v("logged in")])
+
+    res, drv, _, _ = make_run(LOGIN, script)
+    assert [(a["type"], a.get("x")) for a in drv.acts] == [
+        ("launch", None), ("input", 3), ("tap", 9), ("input", 3), ("input", 4)]
+    assert [c["kind"] for c in res.calls] == ["do", "do", "do", "finish", "do", "judge"]
+    assert res.calls[2]["after_do"] == 2 and res.calls[3]["session"] != res.calls[2]["session"]
+    assert res.steps[1].notes == ["直後の割り込みを閉じた後に聞き直して続けた操作: input"]
+    assert res.status == "pass"
+
+
+def test_thens_are_not_judged_on_a_dialog_over_what_the_last_do_led_to(make_run):
+    """No do is asked again after a launch (a dialog cannot take it). After the password, the dialog is closed in the
+    judging call: its verdict is not used, the `do` is asked again (it needed nothing), and the `then` is judged on
+    the next screen."""
+    def script(msg, n):
+        if n == 1:
+            return reply({"type": "launch"})
+        if n == 2:
+            return reply({"type": "tap", "x": 9, "y": 9}, **COOKIE)  # right after the launch
+        if n == 3:
+            assert AGAIN not in msg
+            return reply({"type": "input", "x": 3, "y": 3, "text": "a@b"})
+        if n == 4:
+            return reply({"type": "input", "x": 4, "y": 4, "text": "pw"})
+        if n == 5:
+            assert "only judge" in msg
+            return reply({"type": "tap", "x": 9, "y": 9}, verify=[v("logged in", False)], **COOKIE)
+        if n == 6:
+            assert AGAIN in msg and COVERED in msg and "do: type the password" in msg
+            return reply({"type": "none"})
+        assert "only judge" in msg and "it needed nothing more" in msg
+        return reply({"type": "none"}, verify=[v("logged in")])
+
+    res, drv, _, _ = make_run(LOGIN, script)
+    assert [(a["type"], a.get("x")) for a in drv.acts] == [
+        ("launch", None), ("tap", 9), ("input", 3), ("input", 4), ("tap", 9)]
+    assert [c["kind"] for c in res.calls] == ["do", "do", "do", "do", "judge", "finish", "judge"]
+    assert "after_do" not in res.calls[1]
+    assert res.calls[4]["note"].startswith("前の do の最後の操作の直後に割り込み")
+    assert res.steps[3].status == "pass" and res.steps[3].calls == [7]
+    assert res.status == "pass"
+
+
+def test_a_do_left_in_front_of_a_dialog_is_asked_again_also_with_the_next_dos_thens(make_run):
+    y = """
+name: t
+app: "http://x"
+config: {interrupts: {allow: ["Cookie の同意"]}}
+steps:
+  - id: A
+    actions:
+      - do: "open the app"
+      - do: "tap B"
+      - then: "Y is shown"
+      - do: "tap C"
+"""
+
+    def script(msg, n):
+        if n == 1:
+            return reply({"type": "launch"})
+        if n == 2:
+            return reply({"type": "tap", "x": 5, "y": 5})
+        if n == 3:  # tap C, with the `then` of tap B: the dialog took the tap
+            return reply({"type": "tap", "x": 9, "y": 9}, verify=[v("Y is shown", False)], **COOKIE)
+        if n == 4:
+            assert AGAIN in msg and COVERED in msg and "do: tap B" in msg and "Y is shown" not in msg
+            return reply({"type": "tap", "x": 5, "y": 5})
+        if n == 5:
+            assert "do: tap C" in msg and "it went on: tap" in msg
+            return reply({"type": "tap", "x": 6, "y": 6}, verify=[v("Y is shown")])
+        return reply({"type": "none"})
+
+    res, drv, _, _ = make_run(y, script)
+    assert [a.get("x") for a in drv.acts] == [None, 5, 9, 5, 6]
+    assert [c["kind"] for c in res.calls] == ["do", "do", "do", "finish", "do"]
+    assert res.steps[2].status == "pass" and res.status == "pass"
+
+
+def test_a_dialog_closed_after_a_stale_try_still_has_the_do_asked_again(make_run):
+    drv = __import__("conftest").FakeDriver()
+    drv.stale = [False, False, True]  # the first tap on the dialog finds the screen changed
+
+    def script(msg, n):
+        if n == 1:
+            return reply({"type": "launch"})
+        if n == 2:
+            return reply({"type": "input", "x": 3, "y": 3, "text": "a@b"})
+        if n in (3, 4):
+            return reply({"type": "tap", "x": 9, "y": 9}, **COOKIE)
+        if n == 5:
+            assert AGAIN in msg and COVERED in msg
+            return reply({"type": "none"})
+        if n == 6:
+            return reply({"type": "input", "x": 4, "y": 4, "text": "pw"})
+        return reply({"type": "none"}, verify=[v("logged in")])
+
+    res, drv, _, _ = make_run(LOGIN, script, driver=drv)
+    assert [c["kind"] for c in res.calls] == ["do", "do", "do", "do", "finish", "do", "judge"]
+    assert res.calls[2]["act_result"].startswith("未実行") and res.calls[3]["after_do"] == 2
+    assert res.status == "pass"
+
+
+def test_a_dialog_that_is_not_to_be_closed_asks_nothing_again(make_run):
+    y = LOGIN.replace('config: {interrupts: {allow: ["Cookie の同意"]}}', "config: {interrupts: fail}")
+
+    def script(msg, n):
+        if n == 1:
+            return reply({"type": "launch"})
+        if n == 2:
+            return reply({"type": "input", "x": 3, "y": 3, "text": "a@b"})
+        return reply({"type": "tap", "x": 9, "y": 9}, purpose="interrupt", dialog="Cookie", done=False)
+
+    res, drv, _, _ = make_run(y, script)
+    assert [c["kind"] for c in res.calls] == ["do", "do", "do"]
+    assert [a["type"] for a in drv.acts] == ["launch", "input"]
+    assert res.steps[2].status == "fail" and "Cookie" in res.steps[2].reason
+
+
+def test_the_message_that_asks_a_do_again_after_a_dialog_says_why():
+    from uiai.ai.protocol import Ask, build_message
+
+    m = build_message(Ask(section="s", do="type the email", again=True, covered=True))
+    assert AGAIN in m and COVERED in m and "only if this screen shows that it did not take effect" in m
+    assert COVERED not in build_message(Ask(section="s", do="type the email", again=True))
 
 
 def test_do_failure_stops_the_scenario_and_marks_the_rest_not_run(make_run):

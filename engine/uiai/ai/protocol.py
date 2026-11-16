@@ -181,6 +181,7 @@ class Ask:
     recheck: bool = False
     feedback: str = ""          # result of the previous action
     again: bool = False         # the `do` was reported done: asked again on the screen after its last action
+    covered: bool = False       # (with again) a dialog came up right after its last action, which may have hit it
 
 
 def build_message(a: Ask) -> str:
@@ -193,6 +194,10 @@ def build_message(a: Ask) -> str:
         parts.append("(this `do` was reported done: check it on this screen, after its last action. Return the action "
                      "still needed to do what it says, with \"purpose\": \"step\", or \"none\" with \"done\": true if "
                      "nothing is)")
+    if a.covered:
+        parts.append("(a dialog came up right after that last action and was closed: the action may have hit the "
+                     "dialog instead. Do it again only if this screen shows that it did not take effect, e.g. the "
+                     "text it typed is missing)")
     if a.attempt:
         parts.append(f"(continuing this `do`, action {a.attempt + 1})")
     if a.feedback:

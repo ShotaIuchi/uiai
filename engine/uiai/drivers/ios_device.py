@@ -175,14 +175,7 @@ class IOSDeviceDriver(Driver):
             # iOS has no back key; the edge swipe is the system back gesture in navigation views
             self.wda.drag(2, self.ph / 2, self.pw * 0.7, self.ph / 2, ms=250)
         elif t == "scroll":
-            d = action.get("direction", "down")
-            cx, cy = self.pw / 2, self.ph / 2
-            if d in ("left", "right"):
-                x1, x2 = (self.pw * 0.8, self.pw * 0.2) if d == "left" else (self.pw * 0.2, self.pw * 0.8)
-                self.wda.drag(x1, cy, x2, cy)
-            else:
-                y1, y2 = (0.7, 0.3) if d == "down" else (0.3, 0.7)
-                self.wda.drag(cx, self.ph * y1, cx, self.ph * y2)
+            self.wda.drag(*(round(v, 1) for v in self.swipe(action, self.pw, self.ph, self.to_pt)))
         elif t == "launch":
             try:
                 self.wda.launch(app)

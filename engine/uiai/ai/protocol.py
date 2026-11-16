@@ -28,6 +28,10 @@ Rules:
   (e.g. scroll first, then tap in the next message).
 - x,y = the center of the target in the screenshot's pixel coordinates. For input, x,y = the field to type into
   (omit them to type into the already-focused field). One input action does both the tap and the typing.
+- For scroll, x,y = a point in the area to scroll (the list, a row of chips, a bottom sheet...): the finger starts
+  there (without x,y, in the middle of the screen). "direction" is where the view moves: "down" brings what is
+  below into view (the finger moves up), "right" what is on the right (a swipe to the left). To drag something
+  down with the finger (e.g. pull a bottom sheet down to close it), use "up".
 - "launch" (re)starts the app under test. Use it only for the first step of a section or when the `do` says to
   start/open/restart the app.
 - "back" goes back. "key" presses a key such as Enter. "wait": the screen is still loading/animating, you get a
@@ -176,6 +180,7 @@ class Ask:
     attempt: int = 0
     recheck: bool = False
     feedback: str = ""          # result of the previous action
+    again: bool = False         # the `do` was reported done: asked again on the screen after its last action
 
 
 def build_message(a: Ask) -> str:
@@ -184,6 +189,10 @@ def build_message(a: Ask) -> str:
         parts.append("do: (none - only judge the `then`s; action: none)")
     else:
         parts.append(f"do: {a.do}" + (" [strict]" if a.do_strict else "") + (" [optional]" if a.do_optional else ""))
+    if a.again:
+        parts.append("(this `do` was reported done: check it on this screen, after its last action. Return the action "
+                     "still needed to do what it says, with \"purpose\": \"step\", or \"none\" with \"done\": true if "
+                     "nothing is)")
     if a.attempt:
         parts.append(f"(continuing this `do`, action {a.attempt + 1})")
     if a.feedback:

@@ -209,6 +209,13 @@ def test_keys_home_back_and_scroll(drv, fake_wda):
     assert path(posts[3][1]) == [(195, 844 * 0.7), (195, 844 * 0.3)]                # finger moves up
 
 
+def test_a_scroll_starts_at_the_point_given_in_points(drv, fake_wda):
+    # a bottom sheet pulled down to close it: the finger moves down from the sheet, and stops short of the edge
+    assert drv.act({"type": "scroll", "direction": "up", "x": 270, "y": 700}, "app") == "ok"
+    moves = [a for a in fake_wda.posts()[0][1]["actions"][0]["actions"] if a["type"] == "pointerMove"]
+    assert [(m["x"], m["y"]) for m in moves] == [(195.0, round(700 * 390 / 540, 1)), (195.0, round(844 * 0.95, 1))]
+
+
 def test_launch_error_reset_and_close(drv, fake_wda):
     fake_wda.fail["/session/S1/wda/apps/launch"] = (500, {"error": "unknown error",
                                                           "message": "App with bundle identifier 'x' unknown"})

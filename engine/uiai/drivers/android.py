@@ -164,15 +164,8 @@ class AndroidDriver(Driver):
         elif t == "back":
             self._adb(["shell", "input", "keyevent", "4"])
         elif t == "scroll":
-            d = action.get("direction", "down")
-            cx, cy = self.w // 2, self.h // 2
-            if d in ("left", "right"):
-                x1, x2 = (int(self.w * 0.8), int(self.w * 0.2)) if d == "left" else (int(self.w * 0.2), int(self.w * 0.8))
-                args = [str(x1), str(cy), str(x2), str(cy)]
-            else:
-                y1, y2 = (0.7, 0.3) if d == "down" else (0.3, 0.7)
-                args = [str(cx), str(int(self.h * y1)), str(cx), str(int(self.h * y2))]
-            self._adb(["shell", "input", "swipe", *args, "300"])
+            pts = self.swipe(action, self.w, self.h, self.scale)
+            self._adb(["shell", "input", "swipe", *(str(int(v)) for v in pts), "300"])
         elif t == "launch":
             out = self._adb(["shell", "monkey", "-p", app, "-c", "android.intent.category.LAUNCHER", "1"])
             if "No activities found" in out or "Error" in out:

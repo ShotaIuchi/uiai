@@ -124,3 +124,43 @@ class Driver:
             return float(action["x"]), float(action["y"])
         except (KeyError, TypeError, ValueError):
             return None
+
+    @classmethod
+    def scroll_xy(cls, action: dict) -> tuple[float, float] | None:
+        """Where a "scroll" points, or None. 0,0 is taken for none: the AI fills it into actions that need no
+        coordinates (seen with "fail"), and a corner is never the area to scroll."""
+        p = cls.xy(action)
+        return None if p == (0.0, 0.0) else p
+
+    @classmethod
+    def swipe(cls, action: dict, w: float, h: float, k: float) -> tuple[float, float, float, float]:
+        """(x1, y1, x2, y2): where the finger starts and ends for a "scroll", on a screen of w x h device units
+        (k: device units per pixel of the AI's screenshot).
+
+        "direction" is where the view moves: "down" brings what is below into view, so the finger moves up; "right"
+        what is on the right (a swipe to the left). The finger moves 40% of the height or 60% of the width. It starts
+        at the action's x,y, a point in the area to scroll (a row of chips, a bottom sheet): from the middle of the
+        screen it moved the list below the chips, which took it for a tap on a row, and it could not reach a bottom
+        sheet (a reported run). Without x,y it starts where it always did (70%/30% of the height, 80%/20% of the
+        width, in the middle). It stays off the edges, where a swipe is a system gesture (back, home, notifications),
+        and moves at least half as far, starting further back when the edge is near."""
+        fx, fy = SWIPE_FINGER.get(action.get("direction", "down"), SWIPE_FINGER["down"])
+        size = abs(fx) * w + abs(fy) * h
+        length = size * (0.6 if fx else 0.4)
+        p = cls.scroll_xy(action)
+        if p is None:
+            x1, y1 = w / 2 - fx * length / 2, h / 2 - fy * length / 2
+        else:
+            x1, y1 = _clamp(p[0] * k, w, 0.1), _clamp(p[1] * k, h, 0.1)
+        x2, y2 = _clamp(x1 + fx * length, w, 0.05), _clamp(y1 + fy * length, h, 0.05)
+        if abs(x2 - x1) + abs(y2 - y1) < length / 2:
+            x1, y1 = x2 - fx * length / 2, y2 - fy * length / 2
+        return x1, y1, x2, y2
+
+
+# where the finger moves (x, y) for each scroll direction (the view moves the other way)
+SWIPE_FINGER = {"down": (0, -1), "up": (0, 1), "right": (-1, 0), "left": (1, 0)}
+
+
+def _clamp(v: float, size: float, margin: float) -> float:
+    return min(max(v, size * margin), size * (1 - margin))

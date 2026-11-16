@@ -117,8 +117,11 @@ class WebDriver(Driver):
         elif t == "back":
             p.go_back(wait_until="domcontentloaded", timeout=15000)
         elif t == "scroll":
+            # the wheel scrolls what is under the mouse: the area the AI pointed at (a list inside the page)
             d = action.get("direction", "down")
-            p.mouse.move(self.iw / 2, self.ih / 2)
+            xy = self.scroll_xy(action)
+            p.mouse.move(*((min(max(xy[0], 0), self.iw - 1), min(max(xy[1], 0), self.ih - 1)) if xy else
+                           (self.iw / 2, self.ih / 2)))
             dx = {"left": -1, "right": 1}.get(d, 0) * self.iw * 0.6
             dy = {"down": 1, "up": -1}.get(d, 0) * self.ih * 0.6
             p.mouse.wheel(dx, dy)
